@@ -5,7 +5,7 @@ import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 //  Реальные данные + красивый визуал
 // ═══════════════════════════════════════
 
-const OWM_API_KEY = "YOUR_API_KEY_HERE"; // ← вставь свой ключ OpenWeatherMap
+const OWM_API_KEY = "ae9e552e204ffd1a5534b385a0af66f8"; // ← вставь свой ключ OpenWeatherMap
 
 const tg = window.Telegram?.WebApp;
 const haptic = (type = "light") => { try { tg?.HapticFeedback?.impactOccurred(type); } catch (e) {} };
