@@ -457,7 +457,7 @@ export default function Klevometr() {
 // ══════════════════════════════════════════════════
 function HomeScreen({ go, wd, startSession, userName, shared }) {
   const { weather, moon, biteScore, weatherLoading, locationName } = wd;
-  const { catches, sessions } = shared;
+  const { catches, sessions, gearItems, spots } = shared;
   const now = new Date();
   const totalWeight = catches.reduce((a, c) => a + (parseFloat(c.weight) || 0), 0).toFixed(1);
 
