@@ -1,0 +1,26 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html, body, #root {
+  width: 100%;
+  min-height: 100vh;
+  overflow-x: hidden;
+  background: #0a1628;
+  color: #e2e8f0;
+  font-family: 'Outfit', system-ui, sans-serif;
+}
+
+body {
+  overscroll-behavior: none;
+}
+
+::-webkit-scrollbar { width: 0; }
+
+#root {
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+}
