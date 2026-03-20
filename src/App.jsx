@@ -66,12 +66,7 @@ function getMoonPhase(date = new Date()) {
 // ── Геолокация ──
 function requestGeolocation() {
   return new Promise((resolve, reject) => {
-    if (tg?.LocationManager) {
-      tg.LocationManager.getLocation((loc) => {
-        if (loc) resolve({ lat: loc.latitude, lon: loc.longitude });
-        else browserGeo(resolve, reject);
-      });
-    } else { browserGeo(resolve, reject); }
+    browserGeo(resolve, reject);
   });
 }
 function browserGeo(resolve, reject) {
