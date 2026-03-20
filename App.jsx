@@ -9,7 +9,7 @@ import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 // 1. Зарегистрируйся: https://openweathermap.org/api
 // 2. Скопируй API Key (бесплатный план — 1000 запросов/день)
 // 3. Вставь сюда:
-const OWM_API_KEY = "YOUR_API_KEY_HERE";
+const OWM_API_KEY = "ae9e552e204ffd1a5534b385a0af66f8";
 
 // ── Telegram ──
 const tg = window.Telegram?.WebApp;
