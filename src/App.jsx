@@ -5,7 +5,7 @@ import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 //  Реальные данные + красивый визуал
 // ═══════════════════════════════════════
 
-const OWM_API_KEY = "ae9e552e204ffd1a5534b385a0af66f8"; // ← вставь свой ключ OpenWeatherMap
+const OWM_API_KEY = "YOUR_API_KEY_HERE"; // ← вставь свой ключ OpenWeatherMap
 
 const tg = window.Telegram?.WebApp;
 const haptic = (type = "light") => { try { tg?.HapticFeedback?.impactOccurred(type); } catch (e) {} };
@@ -66,7 +66,12 @@ function getMoonPhase(date = new Date()) {
 // ── Геолокация ──
 function requestGeolocation() {
   return new Promise((resolve, reject) => {
-    browserGeo(resolve, reject);
+    if (tg?.LocationManager) {
+      tg.LocationManager.getLocation((loc) => {
+        if (loc) resolve({ lat: loc.latitude, lon: loc.longitude });
+        else browserGeo(resolve, reject);
+      });
+    } else { browserGeo(resolve, reject); }
   });
 }
 function browserGeo(resolve, reject) {
@@ -80,9 +85,9 @@ function browserGeo(resolve, reject) {
 
 // ── Погода ──
 async function fetchWeather(lat, lon) {
-  if (!OWM_API_KEY || OWM_API_KEY === "ae9e552e204ffd1a5534b385a0af66f8") return null;
+  if (!OWM_API_KEY || OWM_API_KEY === "YOUR_API_KEY_HERE") return null;
   try {
-    const res = await fetch(`https://api.openweathermap.org/data/2.5/weather?lat=${lat}&lon=${lon}&appid=${OWM_API_KEY}&units=metric&lang=ru`, { mode: 'cors' });
+    const res = await fetch(`https://api.openweathermap.org/data/2.5/weather?lat=${lat}&lon=${lon}&appid=${OWM_API_KEY}&units=metric&lang=ru`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const d = await res.json();
     return {
@@ -104,9 +109,9 @@ async function fetchWeather(lat, lon) {
 }
 
 async function fetchForecast(lat, lon) {
-  if (!OWM_API_KEY || OWM_API_KEY === "ae9e552e204ffd1a5534b385a0af66f8") return null;
+  if (!OWM_API_KEY || OWM_API_KEY === "YOUR_API_KEY_HERE") return null;
   try {
-    const res = await fetch(`https://api.openweathermap.org/data/2.5/weather?lat=${lat}&lon=${lon}&appid=${OWM_API_KEY}&units=metric&lang=ru`, { mode: 'cors' });
+    const res = await fetch(`https://api.openweathermap.org/data/2.5/forecast?lat=${lat}&lon=${lon}&appid=${OWM_API_KEY}&units=metric&lang=ru`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const d = await res.json();
     return d.list;
@@ -452,7 +457,7 @@ export default function Klevometr() {
 // ══════════════════════════════════════════════════
 function HomeScreen({ go, wd, startSession, userName, shared }) {
   const { weather, moon, biteScore, weatherLoading, locationName } = wd;
-  const { catches, sessions, gearItems, spots } = shared;
+  const { catches, sessions } = shared;
   const now = new Date();
   const totalWeight = catches.reduce((a, c) => a + (parseFloat(c.weight) || 0), 0).toFixed(1);
 
