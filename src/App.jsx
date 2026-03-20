@@ -82,7 +82,7 @@ function browserGeo(resolve, reject) {
 async function fetchWeather(lat, lon) {
   if (!OWM_API_KEY || OWM_API_KEY === "ae9e552e204ffd1a5534b385a0af66f8") return null;
   try {
-    const res = await fetch(`https://api.openweathermap.org/data/2.5/weather?lat=${lat}&lon=${lon}&appid=${OWM_API_KEY}&units=metric&lang=ru`);
+    const res = await fetch(`https://api.openweathermap.org/data/2.5/weather?lat=${lat}&lon=${lon}&appid=${OWM_API_KEY}&units=metric&lang=ru`, { mode: 'cors' });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const d = await res.json();
     return {
@@ -104,7 +104,7 @@ async function fetchWeather(lat, lon) {
 }
 
 async function fetchForecast(lat, lon) {
-  if (!OWM_API_KEY || OWM_API_KEY === "YOUR_API_KEY_HERE") return null;
+  if (!OWM_API_KEY || OWM_API_KEY === "ae9e552e204ffd1a5534b385a0af66f8") return null;
   try {
     const res = await fetch(`https://api.openweathermap.org/data/2.5/forecast?lat=${lat}&lon=${lon}&appid=${OWM_API_KEY}&units=metric&lang=ru`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
