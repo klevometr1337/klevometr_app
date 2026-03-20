@@ -33,8 +33,8 @@ const BAITS = ["Воблер","Блесна","Джиг","Твистер","Чер
 
 // Точная лунная фаза по астрономической формуле
 function getMoonPhase(date = new Date()) {
-  const year = date.getFullYear();
-  const month = date.getMonth() + 1;
+  let year = date.getFullYear();
+  let month = date.getMonth() + 1;
   const day = date.getDate();
   let c = 0, e = 0, jd = 0, b = 0;
   if (month < 3) { year--; month += 12; }
