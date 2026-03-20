@@ -1,37 +1,40 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 
 // ═══════════════════════════════════════
-//  KLEVOMETR — Telegram Mini App
-//  с реальной погодой и геолокацией
+//  KLEVOMETR — Telegram Mini App v2.0
+//  Реальные данные + красивый визуал
 // ═══════════════════════════════════════
 
-// ── OpenWeatherMap ──
-// 1. Зарегистрируйся: https://openweathermap.org/api
-// 2. Скопируй API Key (бесплатный план — 1000 запросов/день)
-// 3. Вставь сюда:
-const OWM_API_KEY = "ae9e552e204ffd1a5534b385a0af66f8";
+const OWM_API_KEY = "ae9e552e204ffd1a5534b385a0af66f8"; // ← вставь свой ключ OpenWeatherMap
 
-// ── Telegram ──
 const tg = window.Telegram?.WebApp;
-const haptic = (type = 'light') => { try { tg?.HapticFeedback?.impactOccurred(type); } catch(e) {} };
-const hapticNotify = (type = 'success') => { try { tg?.HapticFeedback?.notificationOccurred(type); } catch(e) {} };
+const haptic = (type = "light") => { try { tg?.HapticFeedback?.impactOccurred(type); } catch (e) {} };
+const hapticNotify = (type = "success") => { try { tg?.HapticFeedback?.notificationOccurred(type); } catch (e) {} };
 
-// ── Screens ──
 const SCREENS = {
   home: "home", sessionActive: "sessionActive",
-  diary: "diary", trophy: "trophy", forecast: "forecast",
-  stats: "stats", gear: "gear", social: "social", spots: "spots",
+  diary: "diary", addCatch: "addCatch", viewCatch: "viewCatch",
+  trophy: "trophy", forecast: "forecast",
+  stats: "stats", gear: "gear", addGear: "addGear",
+  social: "social", spots: "spots", addSpot: "addSpot",
   profile: "profile", tournaments: "tournaments", plan: "plan",
 };
 
-const FISH = ["Щука","Окунь","Судак","Карп","Карась","Лещ","Сом","Плотва","Жерех","Форель"];
-const BAITS = ["Воблер","Блесна","Джиг","Твистер","Червь","Опарыш","Мотыль","Кукуруза","Живец","Бойл"];
+const FISH_LIST = ["Щука","Окунь","Судак","Карп","Карась","Лещ","Сом","Плотва","Жерех","Форель","Налим","Язь","Голавль","Красноперка","Густера"];
+const BAITS_LIST = ["Воблер","Блесна вращ.","Блесна колебл.","Джиг","Твистер","Виброхвост","Червь","Опарыш","Мотыль","Кукуруза","Живец","Бойл","Пенопласт","Тесто","Хлеб"];
+const GEAR_TYPES = ["Удилище","Катушка","Леска","Шнур","Приманка","Крючки","Поплавок","Грузило","Подсак","Эхолот","Прочее"];
 
-// ═══════════════════════════════════════
-//  WEATHER & GEO ENGINE
-// ═══════════════════════════════════════
+// ── Хранилище ──
+const storage = {
+  get: (key, def = null) => {
+    try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : def; } catch { return def; }
+  },
+  set: (key, val) => {
+    try { localStorage.setItem(key, JSON.stringify(val)); } catch {}
+  },
+};
 
-// Точная лунная фаза по астрономической формуле
+// ── Лунная фаза ──
 function getMoonPhase(date = new Date()) {
   let year = date.getFullYear();
   let month = date.getMonth() + 1;
@@ -60,204 +63,123 @@ function getMoonPhase(date = new Date()) {
   return phases[b % 8];
 }
 
-// Запрос геолокации
+// ── Геолокация ──
 function requestGeolocation() {
   return new Promise((resolve, reject) => {
-    // Сначала пробуем Telegram LocationManager
     if (tg?.LocationManager) {
       tg.LocationManager.getLocation((loc) => {
-        if (loc) {
-          resolve({ lat: loc.latitude, lon: loc.longitude, source: "telegram" });
-        } else {
-          // Fallback на браузерный API
-          browserGeo(resolve, reject);
-        }
+        if (loc) resolve({ lat: loc.latitude, lon: loc.longitude });
+        else browserGeo(resolve, reject);
       });
-    } else {
-      browserGeo(resolve, reject);
-    }
+    } else { browserGeo(resolve, reject); }
   });
 }
-
 function browserGeo(resolve, reject) {
-  if (!navigator.geolocation) {
-    reject(new Error("Геолокация недоступна"));
-    return;
-  }
+  if (!navigator.geolocation) { reject(new Error("Геолокация недоступна")); return; }
   navigator.geolocation.getCurrentPosition(
-    (pos) => resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude, source: "browser" }),
+    (pos) => resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude }),
     (err) => reject(err),
     { enableHighAccuracy: true, timeout: 10000, maximumAge: 300000 }
   );
 }
 
-// Запрос погоды из OpenWeatherMap
+// ── Погода ──
 async function fetchWeather(lat, lon) {
-  if (!OWM_API_KEY || OWM_API_KEY === "YOUR_API_KEY_HERE") {
-    return null; // Нет ключа — используем симуляцию
-  }
+  if (!OWM_API_KEY || OWM_API_KEY === "YOUR_API_KEY_HERE") return null;
   try {
-    const url = `https://api.openweathermap.org/data/2.5/weather?lat=${lat}&lon=${lon}&appid=${OWM_API_KEY}&units=metric&lang=ru`;
-    const res = await fetch(url);
+    const res = await fetch(`https://api.openweathermap.org/data/2.5/weather?lat=${lat}&lon=${lon}&appid=${OWM_API_KEY}&units=metric&lang=ru`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
+    const d = await res.json();
     return {
-      temp: Math.round(data.main.temp),
-      feelsLike: Math.round(data.main.feels_like),
-      pressure: Math.round(data.main.pressure * 0.750062), // hPa → мм рт.ст.
-      humidity: data.main.humidity,
-      wind: data.wind.speed.toFixed(1),
-      windDeg: data.wind.deg,
-      clouds: data.clouds.all,
-      description: data.weather[0]?.description || "",
-      icon: data.weather[0]?.icon || "01d",
-      cityName: data.name || "—",
-      sunrise: data.sys.sunrise,
-      sunset: data.sys.sunset,
-      waterTemp: Math.round(data.main.temp - 3), // Приблизительная Т воды
+      temp: Math.round(d.main.temp),
+      feelsLike: Math.round(d.main.feels_like),
+      pressure: Math.round(d.main.pressure * 0.750062),
+      humidity: d.main.humidity,
+      wind: d.wind.speed.toFixed(1),
+      windDeg: d.wind.deg,
+      clouds: d.clouds.all,
+      description: d.weather[0]?.description || "",
+      icon: d.weather[0]?.icon || "01d",
+      cityName: d.name || "—",
+      sunrise: d.sys.sunrise,
+      sunset: d.sys.sunset,
+      waterTemp: Math.round(d.main.temp - 3),
     };
-  } catch (e) {
-    console.error("OWM error:", e);
-    return null;
-  }
+  } catch (e) { console.error("OWM:", e); return null; }
 }
 
-// Запрос прогноза на 5 дней (3-часовые интервалы)
 async function fetchForecast(lat, lon) {
   if (!OWM_API_KEY || OWM_API_KEY === "YOUR_API_KEY_HERE") return null;
   try {
-    const url = `https://api.openweathermap.org/data/2.5/forecast?lat=${lat}&lon=${lon}&appid=${OWM_API_KEY}&units=metric&lang=ru`;
-    const res = await fetch(url);
+    const res = await fetch(`https://api.openweathermap.org/data/2.5/forecast?lat=${lat}&lon=${lon}&appid=${OWM_API_KEY}&units=metric&lang=ru`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
-    return data.list; // Массив 3-часовых прогнозов
-  } catch (e) {
-    console.error("OWM forecast error:", e);
-    return null;
-  }
+    const d = await res.json();
+    return d.list;
+  } catch (e) { return null; }
 }
 
-// Алгоритм расчёта клёва на основе РЕАЛЬНЫХ данных
+// ── Прогноз клёва ──
 function computeBiteScore(weather, moon, hour) {
   if (!weather) return simulatedScore(hour);
-
-  // 1. Время суток (35%)
   let timeFactor = 0.3;
   if ((hour >= 5 && hour <= 9) || (hour >= 17 && hour <= 21)) timeFactor = 1.0;
-  else if ((hour >= 10 && hour <= 12) || (hour >= 14 && hour <= 16)) timeFactor = 0.6;
-  else if (hour >= 13 && hour < 14) timeFactor = 0.4;
-
-  // 2. Давление (25%) — оптимум 745-760 мм
+  else if ((hour >= 10 && hour <= 16)) timeFactor = 0.6;
   const p = weather.pressure;
-  let pressureFactor = 1.0;
-  if (p >= 748 && p <= 758) pressureFactor = 1.0;
-  else if (p >= 743 && p < 748) pressureFactor = 0.8;
-  else if (p > 758 && p <= 763) pressureFactor = 0.8;
-  else if (p >= 738 && p < 743) pressureFactor = 0.6;
-  else if (p > 763 && p <= 768) pressureFactor = 0.6;
-  else pressureFactor = 0.4;
-
-  // 3. Ветер (15%) — оптимум 2-5 м/с
+  let pressureFactor = p >= 748 && p <= 758 ? 1.0 : p >= 743 && p < 748 ? 0.8 : p > 758 && p <= 763 ? 0.8 : p >= 738 && p < 743 ? 0.6 : p > 763 && p <= 768 ? 0.6 : 0.4;
   const w = parseFloat(weather.wind);
-  let windFactor = 0.5;
-  if (w >= 2 && w <= 5) windFactor = 1.0;
-  else if (w < 2) windFactor = 0.8;
-  else if (w <= 7) windFactor = 0.7;
-  else if (w <= 10) windFactor = 0.4;
-  else windFactor = 0.2;
-
-  // 4. Луна (15%)
+  let windFactor = w >= 2 && w <= 5 ? 1.0 : w < 2 ? 0.8 : w <= 7 ? 0.7 : w <= 10 ? 0.4 : 0.2;
   const moonFactor = moon?.factor || 0.7;
-
-  // 5. Облачность (10%) — лёгкая облачность лучше
   const cl = weather.clouds;
-  let cloudFactor = 0.7;
-  if (cl >= 30 && cl <= 70) cloudFactor = 1.0;
-  else if (cl < 30) cloudFactor = 0.8;
-  else cloudFactor = 0.6;
-
-  const score = Math.min(100, Math.max(0,
-    Math.round(
-      (timeFactor * 0.35 +
-       pressureFactor * 0.25 +
-       windFactor * 0.15 +
-       moonFactor * 0.15 +
-       cloudFactor * 0.10) * 100
-    )
-  ));
-  return score;
+  let cloudFactor = cl >= 30 && cl <= 70 ? 1.0 : cl < 30 ? 0.8 : 0.6;
+  return Math.min(100, Math.max(0, Math.round((timeFactor * 0.35 + pressureFactor * 0.25 + windFactor * 0.15 + moonFactor * 0.15 + cloudFactor * 0.10) * 100)));
 }
-
-// Фоллбэк — симулированный скор без погоды
 function simulatedScore(hour) {
   let t = 0.3;
   if ((hour >= 5 && hour <= 9) || (hour >= 17 && hour <= 21)) t = 1.0;
-  else if ((hour >= 10 && hour <= 16)) t = 0.6;
+  else if (hour >= 10 && hour <= 16) t = 0.6;
   return Math.min(100, Math.max(0, Math.round((t * 0.5 + 0.7 * 0.3 + 0.8 * 0.2) * 100)));
 }
-
-function getForecastColor(s) { if(s>=70) return "#4ade80"; if(s>=45) return "#fbbf24"; if(s>=25) return "#f97316"; return "#ef4444"; }
-function getForecastLabel(s) { if(s>=70) return "Отличный"; if(s>=45) return "Хороший"; if(s>=25) return "Слабый"; return "Плохой"; }
-
-// Иконка погоды OWM → emoji
+function getScoreColor(s) { return s >= 70 ? "#4ade80" : s >= 45 ? "#fbbf24" : s >= 25 ? "#f97316" : "#ef4444"; }
+function getScoreLabel(s) { return s >= 70 ? "Отличный" : s >= 45 ? "Хороший" : s >= 25 ? "Слабый" : "Плохой"; }
 function weatherEmoji(icon) {
   if (!icon) return "🌤";
   const map = {"01d":"☀️","01n":"🌙","02d":"⛅","02n":"☁️","03d":"☁️","03n":"☁️","04d":"☁️","04n":"☁️","09d":"🌧","09n":"🌧","10d":"🌦","10n":"🌧","11d":"⛈","11n":"⛈","13d":"🌨","13n":"🌨","50d":"🌫","50n":"🌫"};
   return map[icon] || "🌤";
 }
-
-// Направление ветра
 function windDir(deg) {
   if (deg == null) return "";
   const dirs = ["С","ССВ","СВ","ВСВ","В","ВЮВ","ЮВ","ЮЮВ","Ю","ЮЮЗ","ЮЗ","ЗЮЗ","З","ЗСЗ","СЗ","ССЗ"];
   return dirs[Math.round(deg / 22.5) % 16];
 }
 
-// ═══════════════════════════════════════
-//  CUSTOM HOOK: useWeather
-// ═══════════════════════════════════════
+// ── useWeather hook ──
 function useWeather() {
   const [location, setLocation] = useState(null);
   const [weather, setWeather] = useState(null);
   const [forecast, setForecast] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
   const [locationName, setLocationName] = useState("");
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       setLoading(true);
-      setError(null);
       try {
-        // 1. Получаем геолокацию
         const loc = await requestGeolocation();
         if (cancelled) return;
         setLocation(loc);
-
-        // 2. Запрашиваем текущую погоду
         const w = await fetchWeather(loc.lat, loc.lon);
         if (cancelled) return;
-        if (w) {
-          setWeather(w);
-          setLocationName(w.cityName);
-        }
-
-        // 3. Запрашиваем прогноз
+        if (w) { setWeather(w); setLocationName(w.cityName); }
         const fc = await fetchForecast(loc.lat, loc.lon);
         if (cancelled) return;
         if (fc) setForecast(fc);
-
-      } catch (e) {
-        if (!cancelled) setError(e.message);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
+      } catch (e) { console.log("Geo error:", e.message); }
+      finally { if (!cancelled) setLoading(false); }
     })();
     return () => { cancelled = true; };
   }, []);
 
-  // Обновление погоды каждые 10 минут
   useEffect(() => {
     if (!location) return;
     const iv = setInterval(async () => {
@@ -267,16 +189,76 @@ function useWeather() {
     return () => clearInterval(iv);
   }, [location]);
 
-  return { location, weather, forecast, loading, error, locationName };
+  return { location, weather, forecast, loading, locationName };
 }
 
+// ══════════════════════════════════════════════════
+//  ANIMATED BACKGROUND
+// ══════════════════════════════════════════════════
+function AnimatedBg() {
+  return (
+    <div style={{position:"fixed",inset:0,zIndex:0,overflow:"hidden",pointerEvents:"none"}}>
+      <style>{`
+        @keyframes aurora1 {
+          0%,100%{transform:translate(0,0) scale(1)}
+          33%{transform:translate(30px,-20px) scale(1.05)}
+          66%{transform:translate(-20px,30px) scale(0.97)}
+        }
+        @keyframes aurora2 {
+          0%,100%{transform:translate(0,0) scale(1)}
+          33%{transform:translate(-40px,20px) scale(1.08)}
+          66%{transform:translate(25px,-30px) scale(0.95)}
+        }
+        @keyframes aurora3 {
+          0%,100%{transform:translate(0,0) scale(1)}
+          50%{transform:translate(20px,40px) scale(1.1)}
+        }
+        @keyframes ripple {
+          0%{transform:scale(0.8);opacity:0.6}
+          100%{transform:scale(2.5);opacity:0}
+        }
+        @keyframes floatUp {
+          0%{transform:translateY(100vh) translateX(0);opacity:0}
+          10%{opacity:0.4}
+          90%{opacity:0.1}
+          100%{transform:translateY(-10vh) translateX(30px);opacity:0}
+        }
+      `}</style>
+      {/* Deep background */}
+      <div style={{position:"absolute",inset:0,background:"linear-gradient(180deg,#020c18 0%,#041525 40%,#061e35 70%,#040f20 100%)"}}/>
+      {/* Aurora blobs */}
+      <div style={{position:"absolute",top:"10%",left:"20%",width:350,height:350,borderRadius:"50%",background:"radial-gradient(circle,rgba(0,200,120,0.12) 0%,transparent 70%)",animation:"aurora1 12s ease-in-out infinite",filter:"blur(40px)"}}/>
+      <div style={{position:"absolute",top:"40%",right:"10%",width:400,height:300,borderRadius:"50%",background:"radial-gradient(circle,rgba(0,100,200,0.10) 0%,transparent 70%)",animation:"aurora2 15s ease-in-out infinite",filter:"blur(50px)"}}/>
+      <div style={{position:"absolute",bottom:"20%",left:"30%",width:300,height:300,borderRadius:"50%",background:"radial-gradient(circle,rgba(80,0,200,0.07) 0%,transparent 70%)",animation:"aurora3 18s ease-in-out infinite",filter:"blur(60px)"}}/>
+      {/* Stars */}
+      {[...Array(40)].map((_,i)=>(
+        <div key={i} style={{
+          position:"absolute",
+          left:`${(i*37+13)%100}%`,
+          top:`${(i*53+7)%60}%`,
+          width: i%5===0?2:1,
+          height: i%5===0?2:1,
+          borderRadius:"50%",
+          background:"white",
+          opacity: 0.1 + (i%4)*0.1,
+          animation:`floatUp ${15+i%10}s ${i*0.4}s linear infinite`,
+        }}/>
+      ))}
+      {/* Water ripple at bottom */}
+      <div style={{position:"absolute",bottom:0,left:0,right:0,height:120,background:"linear-gradient(to top,rgba(0,30,60,0.8),transparent)"}}/>
+    </div>
+  );
+}
 
-// ═══════════════════════════════════════
+// ══════════════════════════════════════════════════
 //  MAIN APP
-// ═══════════════════════════════════════
+// ══════════════════════════════════════════════════
 export default function Klevometr() {
   const [screen, setScreen] = useState(SCREENS.home);
   const [history, setHistory] = useState([]);
+  const [screenData, setScreenData] = useState(null);
+
+  // Session state
   const [sessionState, setSessionState] = useState("idle");
   const [elapsed, setElapsed] = useState(0);
   const [casts, setCasts] = useState(0);
@@ -290,17 +272,25 @@ export default function Klevometr() {
   const startRef = useRef(null);
   const timerRef = useRef(null);
 
-  // ── Погода и геолокация ──
-  const { weather, forecast, loading: weatherLoading, error: weatherError, locationName } = useWeather();
-  const moon = getMoonPhase();
+  // Real data from localStorage
+  const [catches, setCatches] = useState(() => storage.get("catches", []));
+  const [gearItems, setGearItems] = useState(() => storage.get("gear", []));
+  const [spots, setSpots] = useState(() => storage.get("spots", []));
+  const [sessions, setSessions] = useState(() => storage.get("sessions", []));
 
-  // Прогноз клёва — на основе реальных данных
+  const { weather, forecast, loading: weatherLoading, locationName } = useWeather();
+  const moon = getMoonPhase();
   const currentHour = new Date().getHours();
   const biteScore = computeBiteScore(weather, moon, currentHour);
 
-  const go = useCallback((s) => { setHistory(p => [...p, screen]); setScreen(s); }, [screen]);
+  const go = useCallback((s, data = null) => {
+    setHistory(p => [...p, screen]);
+    setScreenData(data);
+    setScreen(s);
+  }, [screen]);
+
   const back = useCallback(() => {
-    if (history.length) { setScreen(history[history.length-1]); setHistory(p => p.slice(0,-1)); }
+    if (history.length) { setScreen(history[history.length - 1]); setHistory(p => p.slice(0, -1)); }
     else setScreen(SCREENS.home);
   }, [history]);
 
@@ -309,71 +299,151 @@ export default function Klevometr() {
     if (!tg) return;
     if (screen !== SCREENS.home) {
       tg.BackButton.show();
-      const handler = () => back();
-      tg.BackButton.onClick(handler);
-      return () => tg.BackButton.offClick(handler);
+      const h = () => back();
+      tg.BackButton.onClick(h);
+      return () => tg.BackButton.offClick(h);
     } else { tg.BackButton.hide(); }
   }, [screen, back]);
 
   // Timer
   useEffect(() => {
     if (sessionState === "active") {
-      timerRef.current = setInterval(() => {
-        setElapsed(Math.floor((Date.now() - startRef.current) / 1000));
-      }, 1000);
+      timerRef.current = setInterval(() => setElapsed(Math.floor((Date.now() - startRef.current) / 1000)), 1000);
     } else { clearInterval(timerRef.current); }
     return () => clearInterval(timerRef.current);
   }, [sessionState]);
 
-  const startSession = () => { hapticNotify('success'); startRef.current = Date.now(); setElapsed(0); setCasts(0); setBites(0); setCaught(0); setEvents([]); setSessionState("active"); go(SCREENS.sessionActive); };
-  const stopSession = () => { hapticNotify('warning'); setSessionState("idle"); };
-  const addEvent = (type, text) => { setEvents(p => [{ type, text, t: elapsed }, ...p].slice(0, 50)); };
-  const doCast = () => { haptic('medium'); setCasts(p=>p+1); addEvent("cast",`Заброс #${casts+1} — ${distance}м`); setCastAnim(true); setTimeout(()=>setCastAnim(false),400); };
-  const doBite = () => { haptic('heavy'); setBites(p=>p+1); addEvent("bite","Поклёвка!"); setBiteAnim(true); setTimeout(()=>setBiteAnim(false),400); };
-  const doCaught = () => { haptic('heavy'); hapticNotify('success'); setCaught(p=>p+1); addEvent("caught","Рыба поймана! 🐟"); setCaughtAnim(true); setTimeout(()=>setCaughtAnim(false),400); };
+  const startSession = () => {
+    hapticNotify("success");
+    startRef.current = Date.now();
+    setElapsed(0); setCasts(0); setBites(0); setCaught(0); setEvents([]);
+    setSessionState("active");
+    go(SCREENS.sessionActive);
+  };
 
-  const fmt = (s) => `${String(Math.floor(s/3600)).padStart(2,"0")}:${String(Math.floor((s%3600)/60)).padStart(2,"0")}:${String(s%60).padStart(2,"0")}`;
-  const bph = elapsed > 0 ? (bites/(elapsed/3600)).toFixed(1) : "0.0";
-  const realiz = bites > 0 ? Math.round(caught/bites*100) : 0;
+  const stopSession = () => {
+    hapticNotify("warning");
+    setSessionState("idle");
+    if (casts > 0 || bites > 0 || caught > 0) {
+      const session = {
+        id: Date.now(),
+        date: new Date().toLocaleDateString("ru-RU"),
+        duration: elapsed,
+        casts, bites, caught,
+        weather: weather ? `${weather.temp}°, ${weather.pressure}мм` : "—",
+        location: locationName || "—",
+      };
+      const updated = [session, ...sessions].slice(0, 50);
+      setSessions(updated);
+      storage.set("sessions", updated);
+    }
+  };
+
+  const addEvent = (type, text) => setEvents(p => [{ type, text, t: elapsed }, ...p].slice(0, 50));
+  const doCast = () => { haptic("medium"); setCasts(p => p + 1); addEvent("cast", `Заброс #${casts + 1} — ${distance}м`); setCastAnim(true); setTimeout(() => setCastAnim(false), 400); };
+  const doBite = () => { haptic("heavy"); setBites(p => p + 1); addEvent("bite", "Поклёвка!"); setBiteAnim(true); setTimeout(() => setBiteAnim(false), 400); };
+  const doCaught = () => { haptic("heavy"); hapticNotify("success"); setCaught(p => p + 1); addEvent("caught", "Рыба поймана! 🐟"); setCaughtAnim(true); setTimeout(() => setCaughtAnim(false), 400); };
+
+  const fmt = (s) => `${String(Math.floor(s / 3600)).padStart(2, "0")}:${String(Math.floor((s % 3600) / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
+  const bph = elapsed > 0 ? (bites / (elapsed / 3600)).toFixed(1) : "0.0";
+  const realiz = bites > 0 ? Math.round((caught / bites) * 100) : 0;
   const userName = tg?.initDataUnsafe?.user?.first_name || "рыбак";
 
-  // Собираем weatherData объект для передачи в экраны
-  const wd = { weather, forecast, moon, biteScore, weatherLoading, weatherError, locationName, currentHour };
+  // Add catch
+  const saveCatch = (catchData) => {
+    const updated = [{ id: Date.now(), ...catchData }, ...catches];
+    setCatches(updated);
+    storage.set("catches", updated);
+  };
+  const deleteCatch = (id) => {
+    const updated = catches.filter(c => c.id !== id);
+    setCatches(updated);
+    storage.set("catches", updated);
+  };
+
+  // Add gear
+  const saveGear = (item) => {
+    const updated = [{ id: Date.now(), ...item }, ...gearItems];
+    setGearItems(updated);
+    storage.set("gear", updated);
+  };
+  const deleteGear = (id) => {
+    const updated = gearItems.filter(g => g.id !== id);
+    setGearItems(updated);
+    storage.set("gear", updated);
+  };
+
+  // Add spot
+  const saveSpot = (spot) => {
+    const updated = [{ id: Date.now(), ...spot }, ...spots];
+    setSpots(updated);
+    storage.set("spots", updated);
+  };
+  const deleteSpot = (id) => {
+    const updated = spots.filter(s => s.id !== id);
+    setSpots(updated);
+    storage.set("spots", updated);
+  };
+
+  const wd = { weather, forecast, moon, biteScore, weatherLoading, locationName, currentHour };
+  const shared = { catches, gearItems, spots, sessions, saveCatch, deleteCatch, saveGear, deleteGear, saveSpot, deleteSpot };
 
   return (
-    <div style={S.phone}>
+    <div style={S.root}>
+      <AnimatedBg />
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&display=swap');
-        @keyframes fadeUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
-        @keyframes liveDot{0%,100%{opacity:1}50%{opacity:.3}}
-        @keyframes slideDown{from{opacity:0;transform:translateY(-10px)}to{opacity:1;transform:translateY(0)}}
-        .f0{animation:fadeUp .4s ease both}.f1{animation:fadeUp .4s ease .05s both}.f2{animation:fadeUp .4s ease .1s both}.f3{animation:fadeUp .4s ease .15s both}.f4{animation:fadeUp .4s ease .2s both}.f5{animation:fadeUp .4s ease .25s both}
-        .btn:active{transform:scale(.96)!important;opacity:.85}
+        @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@300;400;500;600;700;800;900&display=swap');
+        @keyframes fadeUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
+        @keyframes fadeIn{from{opacity:0}to{opacity:1}}
+        @keyframes liveDot{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(0.8)}}
+        @keyframes slideDown{from{opacity:0;transform:translateY(-12px)}to{opacity:1;transform:translateY(0)}}
+        @keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(74,222,128,0.4)}70%{box-shadow:0 0 0 10px rgba(74,222,128,0)}}
+        @keyframes shimmer{0%{background-position:-200% 0}100%{background-position:200% 0}}
+        .f0{animation:fadeUp .45s cubic-bezier(.16,1,.3,1) both}
+        .f1{animation:fadeUp .45s cubic-bezier(.16,1,.3,1) .06s both}
+        .f2{animation:fadeUp .45s cubic-bezier(.16,1,.3,1) .12s both}
+        .f3{animation:fadeUp .45s cubic-bezier(.16,1,.3,1) .18s both}
+        .f4{animation:fadeUp .45s cubic-bezier(.16,1,.3,1) .24s both}
+        .f5{animation:fadeUp .45s cubic-bezier(.16,1,.3,1) .30s both}
+        .btn:active{transform:scale(.94)!important;opacity:.8;transition:transform .1s,opacity .1s}
+        .btn{transition:transform .2s,opacity .2s}
         ::-webkit-scrollbar{width:0}
+        input,select,textarea{font-family:'Manrope',sans-serif;font-size:14px}
+        input::placeholder{color:#3a5470}
+        select option{background:#0d1e35;color:#e2e8f0}
       `}</style>
 
       <div style={S.content} key={screen}>
-        {screen===SCREENS.home && <HomeScreen go={go} wd={wd} startSession={startSession} userName={userName} />}
-        {screen===SCREENS.sessionActive && <ActiveSession {...{elapsed,casts,bites,caught,events,distance,setDistance,doCast,doBite,doCaught,stopSession,fmt,bph,realiz,castAnim,biteAnim,caughtAnim,back,wd}} />}
-        {screen===SCREENS.forecast && <ForecastScreen wd={wd} />}
-        {screen===SCREENS.diary && <DiaryScreen go={go} />}
-        {screen===SCREENS.trophy && <TrophyScreen />}
-        {screen===SCREENS.stats && <StatsScreen />}
-        {screen===SCREENS.gear && <GearScreen />}
-        {screen===SCREENS.social && <SocialScreen />}
-        {screen===SCREENS.spots && <SpotsScreen />}
-        {screen===SCREENS.profile && <ProfileScreen />}
-        {screen===SCREENS.tournaments && <TournamentsScreen />}
-        {screen===SCREENS.plan && <PlanScreen wd={wd} />}
+        {screen === SCREENS.home && <HomeScreen go={go} wd={wd} startSession={startSession} userName={userName} shared={shared} />}
+        {screen === SCREENS.sessionActive && <ActiveSession {...{ elapsed, casts, bites, caught, events, distance, setDistance, doCast, doBite, doCaught, stopSession, fmt, bph, realiz, castAnim, biteAnim, caughtAnim, back, wd }} />}
+        {screen === SCREENS.forecast && <ForecastScreen wd={wd} />}
+        {screen === SCREENS.diary && <DiaryScreen go={go} shared={shared} />}
+        {screen === SCREENS.addCatch && <AddCatchScreen back={back} saveCatch={saveCatch} weather={weather} locationName={locationName} />}
+        {screen === SCREENS.viewCatch && <ViewCatchScreen back={back} catchItem={screenData} deleteCatch={deleteCatch} />}
+        {screen === SCREENS.stats && <StatsScreen shared={shared} />}
+        {screen === SCREENS.gear && <GearScreen go={go} shared={shared} />}
+        {screen === SCREENS.addGear && <AddGearScreen back={back} saveGear={saveGear} />}
+        {screen === SCREENS.social && <SocialScreen />}
+        {screen === SCREENS.spots && <SpotsScreen go={go} shared={shared} />}
+        {screen === SCREENS.addSpot && <AddSpotScreen back={back} saveSpot={saveSpot} locationName={locationName} />}
+        {screen === SCREENS.profile && <ProfileScreen shared={shared} userName={userName} />}
+        {screen === SCREENS.tournaments && <TournamentsScreen />}
+        {screen === SCREENS.plan && <PlanScreen wd={wd} />}
       </div>
 
       {screen !== SCREENS.sessionActive && (
         <div style={S.tabBar}>
-          {[{k:SCREENS.home,icon:"🏠",label:"Главная"},{k:SCREENS.diary,icon:"📖",label:"Дневник"},{k:SCREENS.forecast,icon:"🌤",label:"Прогноз"},{k:SCREENS.social,icon:"👥",label:"Лента"},{k:SCREENS.profile,icon:"👤",label:"Профиль"}].map(t=>(
-            <button key={t.k} onClick={()=>{haptic('light');setHistory([]);setScreen(t.k)}} className="btn"
-              style={{...S.tab,color:screen===t.k?"#4ade80":"#6b7f99"}}>
-              <span style={{fontSize:20}}>{t.icon}</span>
-              <span style={{fontSize:9,fontWeight:screen===t.k?700:500}}>{t.label}</span>
+          {[
+            { k: SCREENS.home, icon: "🏠", label: "Главная" },
+            { k: SCREENS.diary, icon: "📖", label: "Дневник" },
+            { k: SCREENS.forecast, icon: "🌤", label: "Прогноз" },
+            { k: SCREENS.social, icon: "👥", label: "Лента" },
+            { k: SCREENS.profile, icon: "👤", label: "Профиль" },
+          ].map(t => (
+            <button key={t.k} onClick={() => { haptic("light"); setHistory([]); setScreen(t.k); }} className="btn"
+              style={{ ...S.tab, color: screen === t.k ? "#4ade80" : "#3a5470" }}>
+              <span style={{ fontSize: 20, filter: screen === t.k ? "drop-shadow(0 0 6px rgba(74,222,128,.6))" : "none" }}>{t.icon}</span>
+              <span style={{ fontSize: 9, fontWeight: screen === t.k ? 800 : 500, letterSpacing: 0.3 }}>{t.label}</span>
             </button>
           ))}
         </div>
@@ -382,201 +452,454 @@ export default function Klevometr() {
   );
 }
 
-
-// ═══════════════════════════════════════
-//  WEATHER BADGE (shared mini component)
-// ═══════════════════════════════════════
-function WeatherBadge({ weather, small }) {
-  if (!weather) return <span style={{fontSize:12,color:"#5a7a9b"}}>📍 Определяем...</span>;
-  const sz = small ? 11 : 12;
-  return (
-    <div style={{display:"flex",gap:small?8:12,flexWrap:"wrap",alignItems:"center"}}>
-      <span style={{fontSize:sz,color:"#5a7a9b"}}>{weatherEmoji(weather.icon)} {weather.temp}°</span>
-      <span style={{fontSize:sz,color:"#5a7a9b"}}>💨 {weather.wind} м/с {windDir(weather.windDeg)}</span>
-      <span style={{fontSize:sz,color:"#5a7a9b"}}>🌡 {weather.pressure} мм</span>
-    </div>
-  );
-}
-
-// ═══════════ HOME ═══════════
-function HomeScreen({ go, wd, startSession, userName }) {
+// ══════════════════════════════════════════════════
+//  HOME SCREEN
+// ══════════════════════════════════════════════════
+function HomeScreen({ go, wd, startSession, userName, shared }) {
   const { weather, moon, biteScore, weatherLoading, locationName } = wd;
+  const { catches, sessions } = shared;
   const now = new Date();
+  const totalWeight = catches.reduce((a, c) => a + (parseFloat(c.weight) || 0), 0).toFixed(1);
+
   return (
-    <div style={{padding:"0 20px 16px"}}>
-      <div className="f0" style={{padding:"16px 0 4px"}}>
-        <div style={{fontSize:11,color:"#6b8aad",fontWeight:700,letterSpacing:2,textTransform:"uppercase"}}>
-          Клёвометр{locationName ? ` · ${locationName}` : ""}
+    <div style={{ padding: "0 16px 16px" }}>
+      {/* Header */}
+      <div className="f0" style={{ padding: "20px 0 8px" }}>
+        <div style={{ fontSize: 11, color: "#3a8a6a", fontWeight: 700, letterSpacing: 3, textTransform: "uppercase", marginBottom: 6 }}>
+          {locationName ? `📍 ${locationName}` : "🎣 Клёвометр"}
         </div>
-        <div style={{fontSize:26,fontWeight:900,marginTop:4,background:"linear-gradient(135deg,#4ade80,#22d3ee)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>Привет, {userName}! 🎣</div>
-        <div style={{fontSize:13,color:"#5a7a9b",marginTop:2}}>{now.toLocaleDateString("ru-RU",{weekday:"long",day:"numeric",month:"long"})}</div>
+        <div style={{ fontSize: 28, fontWeight: 900, lineHeight: 1.1 }}>
+          <span style={{ background: "linear-gradient(135deg,#4ade80 0%,#22d3ee 50%,#818cf8 100%)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>
+            Привет, {userName}!
+          </span>
+        </div>
+        <div style={{ fontSize: 12, color: "#3a5470", marginTop: 4, fontWeight: 500 }}>
+          {now.toLocaleDateString("ru-RU", { weekday: "long", day: "numeric", month: "long" })}
+        </div>
       </div>
 
-      {/* Start session */}
-      <button onClick={startSession} className="btn f1" style={{...S.card,width:"100%",textAlign:"left",cursor:"pointer",display:"flex",alignItems:"center",gap:14,border:"1.5px solid rgba(74,222,128,.3)",background:"linear-gradient(135deg,rgba(74,222,128,.08),rgba(17,29,51,.9))",padding:16,boxSizing:"border-box"}}>
-        <div style={{width:52,height:52,borderRadius:14,background:"linear-gradient(135deg,#22c55e,#16a34a)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:24,flexShrink:0,boxShadow:"0 4px 16px rgba(34,197,94,.3)"}}>🎣</div>
-        <div style={{flex:1}}>
-          <div style={{fontWeight:800,fontSize:16,color:"#4ade80"}}>Начать рыбалку</div>
-          <div style={{fontSize:12,color:"#6b8aad",marginTop:2}}>Забросы, поклёвки и аналитика</div>
+      {/* Start Session — hero button */}
+      <button onClick={startSession} className="btn f1" style={{
+        width: "100%", textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: 16,
+        padding: "18px 20px", boxSizing: "border-box", marginBottom: 10, borderRadius: 20,
+        background: "linear-gradient(135deg,rgba(74,222,128,0.15) 0%,rgba(34,211,238,0.08) 100%)",
+        border: "1.5px solid rgba(74,222,128,0.3)", backdropFilter: "blur(20px)",
+        boxShadow: "0 8px 32px rgba(74,222,128,0.08), inset 0 1px 0 rgba(255,255,255,0.05)",
+        animation: "pulse 3s ease-in-out infinite",
+      }}>
+        <div style={{ width: 56, height: 56, borderRadius: 16, background: "linear-gradient(135deg,#16a34a,#0891b2)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 26, flexShrink: 0, boxShadow: "0 6px 20px rgba(22,163,74,0.4)" }}>🎣</div>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontWeight: 900, fontSize: 18, color: "#4ade80", letterSpacing: -0.3 }}>Начать рыбалку</div>
+          <div style={{ fontSize: 12, color: "#3a7a5a", marginTop: 3, fontWeight: 500 }}>Трекинг · забросы · аналитика</div>
         </div>
-        <span style={{color:"#4ade80",fontSize:22}}>›</span>
+        <div style={{ fontSize: 24, color: "rgba(74,222,128,0.6)" }}>›</div>
       </button>
 
-      {/* Forecast with REAL data */}
-      <button onClick={()=>go(SCREENS.forecast)} className="btn f2" style={{...S.card,width:"100%",textAlign:"left",cursor:"pointer",display:"flex",alignItems:"center",gap:14,padding:16,boxSizing:"border-box"}}>
-        <div style={{position:"relative",width:56,height:56,flexShrink:0}}>
-          <svg width={56} height={56} style={{transform:"rotate(-90deg)"}}><circle cx={28} cy={28} r={24} fill="none" stroke="#1e3454" strokeWidth={5}/><circle cx={28} cy={28} r={24} fill="none" stroke={getForecastColor(biteScore)} strokeWidth={5} strokeDasharray={150.8} strokeDashoffset={150.8*(1-biteScore/100)} strokeLinecap="round"/></svg>
-          <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,fontWeight:900,color:getForecastColor(biteScore)}}>
-            {weatherLoading ? "..." : biteScore}
+      {/* Bite Score + Weather */}
+      <button onClick={() => go(SCREENS.forecast)} className="btn f2" style={{
+        width: "100%", textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: 16,
+        padding: "16px 20px", boxSizing: "border-box", marginBottom: 10, borderRadius: 20,
+        background: "rgba(10,22,40,0.7)", border: "1px solid rgba(255,255,255,0.06)",
+        backdropFilter: "blur(20px)", boxShadow: "0 4px 24px rgba(0,0,0,0.3)",
+      }}>
+        <div style={{ position: "relative", width: 60, height: 60, flexShrink: 0 }}>
+          <svg width={60} height={60} style={{ transform: "rotate(-90deg)" }}>
+            <circle cx={30} cy={30} r={25} fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth={5} />
+            <circle cx={30} cy={30} r={25} fill="none" stroke={getScoreColor(biteScore)} strokeWidth={5}
+              strokeDasharray={157.1} strokeDashoffset={157.1 * (1 - biteScore / 100)} strokeLinecap="round" />
+          </svg>
+          <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 15, fontWeight: 900, color: getScoreColor(biteScore) }}>
+            {weatherLoading ? "…" : biteScore}
           </div>
         </div>
-        <div style={{flex:1}}>
-          <div style={{fontSize:12,color:"#6b8aad",fontWeight:600,textTransform:"uppercase",letterSpacing:1}}>Прогноз клёва</div>
-          <div style={{fontSize:18,fontWeight:800,color:getForecastColor(biteScore),marginTop:2}}>{getForecastLabel(biteScore)}</div>
-          <div style={{marginTop:4}}>
-            {weather
-              ? <WeatherBadge weather={weather} small />
-              : <span style={{fontSize:11,color:"#3d5a80"}}>{moon.icon} {moon.name}</span>
-            }
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 11, color: "#3a5470", fontWeight: 700, textTransform: "uppercase", letterSpacing: 1.5 }}>Прогноз клёва</div>
+          <div style={{ fontSize: 19, fontWeight: 800, color: getScoreColor(biteScore), marginTop: 2 }}>{getScoreLabel(biteScore)}</div>
+          <div style={{ marginTop: 5, display: "flex", gap: 10, flexWrap: "wrap" }}>
+            {weather ? (
+              <>
+                <span style={{ fontSize: 11, color: "#3a5470" }}>{weatherEmoji(weather.icon)} {weather.temp}°C</span>
+                <span style={{ fontSize: 11, color: "#3a5470" }}>💨 {weather.wind}м/с</span>
+                <span style={{ fontSize: 11, color: "#3a5470" }}>🌡 {weather.pressure}мм</span>
+              </>
+            ) : (
+              <span style={{ fontSize: 11, color: "#3a5470" }}>{moon.icon} {moon.name}</span>
+            )}
           </div>
         </div>
-        <span style={{color:"#6b8aad",fontSize:18}}>›</span>
+        <div style={{ fontSize: 18, color: "#2a3f55" }}>›</div>
       </button>
 
-      {/* Grid */}
-      <div className="f3" style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginTop:2}}>
+      {/* Quick stats */}
+      <div className="f3" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 10 }}>
         {[
-          {icon:"📖",label:"Дневник",sub:"24 улова",screen:SCREENS.diary,color:"#60a5fa"},
-          {icon:"📊",label:"Статистика",sub:"Аналитика",screen:SCREENS.stats,color:"#f59e0b"},
-          {icon:"🗺",label:"Мои места",sub:"8 точек",screen:SCREENS.spots,color:"#22d3ee"},
-          {icon:"🎒",label:"Снаряжение",sub:"Инвентарь",screen:SCREENS.gear,color:"#a78bfa"},
-          {icon:"🏆",label:"Турниры",sub:"2 активных",screen:SCREENS.tournaments,color:"#f97316"},
-          {icon:"📅",label:"Планирование",sub:"Календарь",screen:SCREENS.plan,color:"#ec4899"},
-        ].map((item,i)=>(
-          <button key={item.label} onClick={()=>{haptic('light');go(item.screen)}} className="btn"
-            style={{...S.card,padding:16,cursor:"pointer",display:"flex",alignItems:"center",gap:12,textAlign:"left",boxSizing:"border-box"}}>
-            <div style={{fontSize:24,width:40,height:40,borderRadius:10,background:`${item.color}15`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{item.icon}</div>
-            <div><div style={{fontWeight:700,fontSize:14,color:"#e2e8f0"}}>{item.label}</div><div style={{fontSize:11,color:"#5a7a9b",marginTop:1}}>{item.sub}</div></div>
+          { v: catches.length, l: "уловов", c: "#4ade80", icon: "🐟" },
+          { v: `${totalWeight}кг`, l: "поймано", c: "#fbbf24", icon: "⚖️" },
+          { v: sessions.length, l: "сессий", c: "#60a5fa", icon: "📊" },
+        ].map(s => (
+          <div key={s.l} style={{ ...G.glass, padding: "14px 12px", textAlign: "center", borderRadius: 16 }}>
+            <div style={{ fontSize: 18 }}>{s.icon}</div>
+            <div style={{ fontSize: 20, fontWeight: 900, color: s.c, marginTop: 4 }}>{s.v}</div>
+            <div style={{ fontSize: 10, color: "#2a3f55", fontWeight: 600, marginTop: 2 }}>{s.l}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Grid nav */}
+      <div className="f4" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+        {[
+          { icon: "📖", label: "Дневник", sub: `${catches.length} записей`, screen: SCREENS.diary, color: "#60a5fa" },
+          { icon: "📊", label: "Статистика", sub: "Аналитика", screen: SCREENS.stats, color: "#f59e0b" },
+          { icon: "🗺", label: "Мои места", sub: `${spots.length} точек`, screen: SCREENS.spots, color: "#22d3ee" },
+          { icon: "🎒", label: "Снаряжение", sub: `${gearItems.length} предметов`, screen: SCREENS.gear, color: "#a78bfa" },
+          { icon: "🏆", label: "Турниры", sub: "Соревнования", screen: SCREENS.tournaments, color: "#f97316" },
+          { icon: "📅", label: "Планирование", sub: "Календарь", screen: SCREENS.plan, color: "#ec4899" },
+        ].map(item => (
+          <button key={item.label} onClick={() => { haptic("light"); go(item.screen); }} className="btn"
+            style={{ ...G.glass, padding: "14px", cursor: "pointer", display: "flex", alignItems: "center", gap: 12, textAlign: "left", boxSizing: "border-box", borderRadius: 16 }}>
+            <div style={{ fontSize: 22, width: 42, height: 42, borderRadius: 12, background: `${item.color}15`, border: `1px solid ${item.color}25`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{item.icon}</div>
+            <div>
+              <div style={{ fontWeight: 700, fontSize: 14, color: "#c8ddf0" }}>{item.label}</div>
+              <div style={{ fontSize: 11, color: "#2a4060", marginTop: 2 }}>{item.sub}</div>
+            </div>
           </button>
         ))}
       </div>
 
-      {/* Current conditions card */}
-      {weather && (
-        <div className="f4" style={{...S.card,marginTop:2}}>
-          <div style={{fontSize:12,color:"#6b8aad",fontWeight:700,textTransform:"uppercase",letterSpacing:1,marginBottom:10}}>
-            {weatherEmoji(weather.icon)} Сейчас · {weather.cityName}
+      {/* Last catch */}
+      {catches.length > 0 && (
+        <div className="f5" style={{ ...G.glass, marginTop: 10, padding: 16, borderRadius: 20 }}>
+          <div style={{ fontSize: 11, color: "#3a5470", fontWeight: 700, textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 10 }}>🐟 Последний улов</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <div style={{ width: 44, height: 44, borderRadius: 12, background: "rgba(74,222,128,0.08)", border: "1px solid rgba(74,222,128,0.15)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22 }}>🐟</div>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 700, fontSize: 15 }}>{catches[0].fish}</div>
+              <div style={{ fontSize: 12, color: "#3a5470", marginTop: 2 }}>{catches[0].location || "—"} · {catches[0].bait || "—"}</div>
+            </div>
+            <div style={{ textAlign: "right" }}>
+              <div style={{ fontWeight: 900, fontSize: 17, color: "#4ade80" }}>{catches[0].weight}<span style={{ fontSize: 10, color: "#3a5470" }}> кг</span></div>
+              <div style={{ fontSize: 10, color: "#2a3f55" }}>{catches[0].date}</div>
+            </div>
           </div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
-            {[
-              {l:"Темп.",v:`${weather.temp}°`,c:"#f97316"},
-              {l:"Давление",v:`${weather.pressure}`,c:"#60a5fa"},
-              {l:"Ветер",v:`${weather.wind}`,c:"#6b8aad"},
-            ].map(s=>(
-              <div key={s.l} style={{textAlign:"center"}}>
-                <div style={{fontSize:20,fontWeight:900,color:s.c}}>{s.v}</div>
-                <div style={{fontSize:10,color:"#5a7a9b",marginTop:2}}>{s.l}</div>
-              </div>
-            ))}
-          </div>
-          <div style={{fontSize:12,color:"#5a7a9b",marginTop:8,textAlign:"center"}}>{weather.description}</div>
         </div>
       )}
     </div>
   );
 }
 
-
-// ═══════════ ACTIVE SESSION ═══════════
-function ActiveSession({ elapsed,casts,bites,caught,events,distance,setDistance,doCast,doBite,doCaught,stopSession,fmt,bph,realiz,castAnim,biteAnim,caughtAnim,back,wd }) {
+// ══════════════════════════════════════════════════
+//  ACTIVE SESSION
+// ══════════════════════════════════════════════════
+function ActiveSession({ elapsed, casts, bites, caught, events, distance, setDistance, doCast, doBite, doCaught, stopSession, fmt, bph, realiz, castAnim, biteAnim, caughtAnim, back, wd }) {
   const { weather } = wd;
   return (
-    <div style={{padding:"0 16px 16px"}}>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"12px 0"}}>
-        <div style={{fontSize:18,fontWeight:900}}>Рыбалка</div>
-        <div style={{display:"flex",alignItems:"center",gap:6}}>
-          <div style={{width:8,height:8,borderRadius:"50%",background:"#4ade80",animation:"liveDot 1.5s infinite"}}/>
-          <span style={{fontSize:12,fontWeight:800,color:"#4ade80"}}>LIVE</span>
+    <div style={{ padding: "0 16px 20px" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 0 8px" }}>
+        <div style={{ fontSize: 20, fontWeight: 900 }}>Рыбалка</div>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 12px", borderRadius: 20, background: "rgba(74,222,128,0.1)", border: "1px solid rgba(74,222,128,0.2)" }}>
+          <div style={{ width: 7, height: 7, borderRadius: "50%", background: "#4ade80", animation: "liveDot 1.2s infinite" }} />
+          <span style={{ fontSize: 11, fontWeight: 800, color: "#4ade80", letterSpacing: 1 }}>LIVE</span>
         </div>
       </div>
 
-      {/* Weather strip on session */}
       {weather && (
-        <div className="f0" style={{display:"flex",justifyContent:"center",gap:16,padding:"8px 0 4px",marginBottom:4}}>
-          <span style={{fontSize:11,color:"#5a7a9b"}}>{weatherEmoji(weather.icon)} {weather.temp}°</span>
-          <span style={{fontSize:11,color:"#5a7a9b"}}>🌡 {weather.pressure} мм</span>
-          <span style={{fontSize:11,color:"#5a7a9b"}}>💨 {weather.wind} м/с {windDir(weather.windDeg)}</span>
-          <span style={{fontSize:11,color:"#5a7a9b"}}>💧 {weather.humidity}%</span>
+        <div className="f0" style={{ display: "flex", justifyContent: "center", gap: 14, padding: "6px 0 10px", flexWrap: "wrap" }}>
+          {[
+            `${weatherEmoji(weather.icon)} ${weather.temp}°`,
+            `🌡 ${weather.pressure}мм`,
+            `💨 ${weather.wind}м/с ${windDir(weather.windDeg)}`,
+            `💧 ${weather.humidity}%`,
+          ].map(t => <span key={t} style={{ fontSize: 11, color: "#3a5470", fontWeight: 500 }}>{t}</span>)}
         </div>
       )}
 
       {/* Timer */}
-      <div className="f0" style={{...S.card,textAlign:"center",padding:"20px 16px",background:"linear-gradient(135deg,#111d33,#0c2a1e)",border:"1.5px solid rgba(74,222,128,.25)"}}>
-        <div style={{fontSize:48,fontWeight:900,fontFamily:"'Courier New',monospace",letterSpacing:4,color:"#4ade80",textShadow:"0 0 40px rgba(74,222,128,.2)"}}>{fmt(elapsed)}</div>
-        <div style={{display:"flex",gap:24,justifyContent:"center",marginTop:12}}>
-          <div><div style={{fontSize:24,fontWeight:900,color:"#60a5fa"}}>{casts}</div><div style={{fontSize:10,color:"#5a7a9b",fontWeight:600}}>ЗАБРОСОВ</div></div>
-          <div><div style={{fontSize:24,fontWeight:900,color:"#fbbf24"}}>{bites}</div><div style={{fontSize:10,color:"#5a7a9b",fontWeight:600}}>ПОКЛЁВОК</div></div>
-          <div><div style={{fontSize:24,fontWeight:900,color:"#4ade80"}}>{caught}</div><div style={{fontSize:10,color:"#5a7a9b",fontWeight:600}}>ПОЙМАНО</div></div>
+      <div className="f0" style={{ ...G.glass, textAlign: "center", padding: "22px 16px", borderRadius: 24, border: "1px solid rgba(74,222,128,0.2)", marginBottom: 10 }}>
+        <div style={{ fontSize: 52, fontWeight: 900, fontFamily: "'Courier New',monospace", letterSpacing: 5, color: "#4ade80", textShadow: "0 0 30px rgba(74,222,128,0.3)" }}>{fmt(elapsed)}</div>
+        <div style={{ display: "flex", gap: 28, justifyContent: "center", marginTop: 14 }}>
+          {[
+            { v: casts, l: "ЗАБРОСОВ", c: "#60a5fa" },
+            { v: bites, l: "ПОКЛЁВОК", c: "#fbbf24" },
+            { v: caught, l: "ПОЙМАНО", c: "#4ade80" },
+          ].map(s => (
+            <div key={s.l}>
+              <div style={{ fontSize: 26, fontWeight: 900, color: s.c }}>{s.v}</div>
+              <div style={{ fontSize: 9, color: "#2a3f55", fontWeight: 700, letterSpacing: 1 }}>{s.l}</div>
+            </div>
+          ))}
         </div>
       </div>
 
       {/* Distance */}
-      <div className="f1" style={{...S.card,padding:14}}>
-        <div style={{fontSize:11,color:"#6b8aad",fontWeight:700,textTransform:"uppercase",letterSpacing:1,marginBottom:8}}>Дистанция: {distance}м</div>
-        <input type="range" min={5} max={80} value={distance} onChange={e=>setDistance(+e.target.value)} style={{width:"100%",accentColor:"#4ade80",height:6}}/>
-        <div style={{display:"flex",justifyContent:"space-between",fontSize:10,color:"#5a7a9b",marginTop:4}}><span>5м</span><span>Ближняя</span><span>Средняя</span><span>Дальняя</span><span>80м</span></div>
+      <div className="f1" style={{ ...G.glass, padding: "14px 16px", borderRadius: 16, marginBottom: 10 }}>
+        <div style={{ fontSize: 11, color: "#3a5470", fontWeight: 700, textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 8 }}>Дистанция: <span style={{ color: "#4ade80" }}>{distance}м</span></div>
+        <input type="range" min={5} max={80} value={distance} onChange={e => setDistance(+e.target.value)} style={{ width: "100%", accentColor: "#4ade80", height: 5, cursor: "pointer" }} />
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "#2a3f55", marginTop: 5 }}>
+          <span>5м</span><span>Ближняя</span><span>Средняя</span><span>Дальняя</span><span>80м</span>
+        </div>
       </div>
 
       {/* Action buttons */}
-      <div className="f2" style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
-        <button onClick={doCast} className="btn" style={{...S.actionBtn,borderColor:"rgba(96,165,250,.3)",background:"linear-gradient(180deg,rgba(96,165,250,.1),transparent)",color:"#60a5fa",transform:castAnim?"scale(1.1)":"scale(1)",transition:"transform .15s"}}><span style={{fontSize:32}}>🎯</span><span style={{fontSize:14,fontWeight:800,marginTop:4}}>Заброс</span><span style={{fontSize:24,fontWeight:900,marginTop:2}}>{casts}</span></button>
-        <button onClick={doBite} className="btn" style={{...S.actionBtn,borderColor:"rgba(251,191,36,.3)",background:"linear-gradient(180deg,rgba(251,191,36,.1),transparent)",color:"#fbbf24",transform:biteAnim?"scale(1.1)":"scale(1)",transition:"transform .15s"}}><span style={{fontSize:32}}>⚡</span><span style={{fontSize:14,fontWeight:800,marginTop:4}}>Поклёвка</span><span style={{fontSize:24,fontWeight:900,marginTop:2}}>{bites}</span></button>
-        <button onClick={doCaught} className="btn" style={{...S.actionBtn,borderColor:"rgba(74,222,128,.3)",background:"linear-gradient(180deg,rgba(74,222,128,.1),transparent)",color:"#4ade80",transform:caughtAnim?"scale(1.1)":"scale(1)",transition:"transform .15s"}}><span style={{fontSize:32}}>🐟</span><span style={{fontSize:14,fontWeight:800,marginTop:4}}>Поймал</span><span style={{fontSize:24,fontWeight:900,marginTop:2}}>{caught}</span></button>
+      <div className="f2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 10 }}>
+        {[
+          { fn: doCast, anim: castAnim, icon: "🎯", label: "Заброс", count: casts, color: "#60a5fa", border: "rgba(96,165,250,0.3)" },
+          { fn: doBite, anim: biteAnim, icon: "⚡", label: "Поклёвка", count: bites, color: "#fbbf24", border: "rgba(251,191,36,0.3)" },
+          { fn: doCaught, anim: caughtAnim, icon: "🐟", label: "Поймал", count: caught, color: "#4ade80", border: "rgba(74,222,128,0.3)" },
+        ].map(b => (
+          <button key={b.label} onClick={b.fn} className="btn" style={{
+            padding: "18px 8px", borderRadius: 18, border: `2px solid ${b.border}`,
+            background: `linear-gradient(180deg,${b.color}12,transparent)`,
+            cursor: "pointer", fontFamily: "inherit",
+            display: "flex", flexDirection: "column", alignItems: "center",
+            transform: b.anim ? "scale(1.08)" : "scale(1)", transition: "transform .15s",
+            boxShadow: b.anim ? `0 0 20px ${b.color}40` : "none",
+          }}>
+            <span style={{ fontSize: 30 }}>{b.icon}</span>
+            <span style={{ fontSize: 12, fontWeight: 800, color: b.color, marginTop: 6 }}>{b.label}</span>
+            <span style={{ fontSize: 22, fontWeight: 900, color: b.color, marginTop: 2 }}>{b.count}</span>
+          </button>
+        ))}
       </div>
 
-      {/* Live analytics */}
-      <div className="f3" style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginTop:12}}>
-        <div style={{...S.miniCard,borderColor:"rgba(251,191,36,.12)"}}><div style={{fontSize:10,color:"#5a7a9b",fontWeight:700}}>ПОКЛЁВКИ/ЧАС</div><div style={{fontSize:22,fontWeight:900,color:"#fbbf24"}}>{bph}</div></div>
-        <div style={{...S.miniCard,borderColor:"rgba(74,222,128,.12)"}}><div style={{fontSize:10,color:"#5a7a9b",fontWeight:700}}>РЕАЛИЗАЦИЯ</div><div style={{fontSize:22,fontWeight:900,color:"#4ade80"}}>{realiz}%</div></div>
-        <div style={{...S.miniCard,borderColor:"rgba(96,165,250,.12)"}}><div style={{fontSize:10,color:"#5a7a9b",fontWeight:700}}>ЗАБРОС/ЧАС</div><div style={{fontSize:22,fontWeight:900,color:"#60a5fa"}}>{elapsed>0?((casts/(elapsed/3600))).toFixed(1):"0.0"}</div></div>
-        <div style={{...S.miniCard,borderColor:"rgba(249,115,22,.12)"}}><div style={{fontSize:10,color:"#5a7a9b",fontWeight:700}}>ПОДСЕЧКА</div><div style={{fontSize:22,fontWeight:900,color:"#f97316"}}>{casts>0?Math.round(bites/casts*100):0}%</div></div>
+      {/* Analytics */}
+      <div className="f3" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 10 }}>
+        {[
+          { l: "ПОКЛЁВКИ/ЧАС", v: bph, c: "#fbbf24" },
+          { l: "РЕАЛИЗАЦИЯ", v: `${realiz}%`, c: "#4ade80" },
+          { l: "ЗАБРОСОВ/ЧАС", v: elapsed > 0 ? (casts / (elapsed / 3600)).toFixed(1) : "0.0", c: "#60a5fa" },
+          { l: "ПОДСЕЧКА", v: `${casts > 0 ? Math.round((bites / casts) * 100) : 0}%`, c: "#f97316" },
+        ].map(s => (
+          <div key={s.l} style={{ ...G.glass, padding: 12, borderRadius: 14, textAlign: "center" }}>
+            <div style={{ fontSize: 9, color: "#2a3f55", fontWeight: 700, letterSpacing: 1 }}>{s.l}</div>
+            <div style={{ fontSize: 22, fontWeight: 900, color: s.c, marginTop: 4 }}>{s.v}</div>
+          </div>
+        ))}
       </div>
 
       {/* Event log */}
-      {events.length>0&&(<div className="f4" style={{...S.card,marginTop:12,padding:14}}>
-        <div style={{fontSize:11,color:"#6b8aad",fontWeight:700,textTransform:"uppercase",letterSpacing:1,marginBottom:8}}>📋 Лента</div>
-        <div style={{maxHeight:180,overflowY:"auto"}}>
-          {events.slice(0,12).map((ev,i)=>(
-            <div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 0",borderBottom:i<Math.min(events.length,12)-1?"1px solid #1e3454":"none",animation:i===0?"slideDown .3s ease":"none"}}>
-              <span style={{fontSize:14}}>{ev.type==="cast"?"🎯":ev.type==="bite"?"⚡":"🐟"}</span>
-              <span style={{flex:1,fontSize:12,color:ev.type==="cast"?"#6b8aad":ev.type==="bite"?"#fbbf24":"#4ade80",fontWeight:600}}>{ev.text}</span>
-              <span style={{fontSize:10,color:"#3d5a80",fontFamily:"monospace"}}>{fmt(ev.t)}</span>
-            </div>
-          ))}
+      {events.length > 0 && (
+        <div className="f4" style={{ ...G.glass, padding: 14, borderRadius: 16, marginBottom: 10 }}>
+          <div style={{ fontSize: 11, color: "#3a5470", fontWeight: 700, textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 8 }}>📋 Лента событий</div>
+          <div style={{ maxHeight: 160, overflowY: "auto" }}>
+            {events.slice(0, 10).map((ev, i) => (
+              <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0", borderBottom: i < Math.min(events.length, 10) - 1 ? "1px solid rgba(255,255,255,0.04)" : "none", animation: i === 0 ? "slideDown .3s ease" : "none" }}>
+                <span style={{ fontSize: 14 }}>{ev.type === "cast" ? "🎯" : ev.type === "bite" ? "⚡" : "🐟"}</span>
+                <span style={{ flex: 1, fontSize: 12, color: ev.type === "cast" ? "#3a5470" : ev.type === "bite" ? "#fbbf24" : "#4ade80", fontWeight: 600 }}>{ev.text}</span>
+                <span style={{ fontSize: 10, color: "#1a2f45", fontFamily: "monospace" }}>{fmt(ev.t)}</span>
+              </div>
+            ))}
+          </div>
         </div>
-      </div>)}
+      )}
 
-      <button onClick={()=>{stopSession();back()}} className="btn" style={{width:"100%",marginTop:14,padding:14,borderRadius:14,border:"1.5px solid rgba(239,68,68,.3)",background:"rgba(239,68,68,.08)",color:"#ef4444",fontWeight:800,fontSize:15,cursor:"pointer",fontFamily:"inherit"}}>⏹ Завершить сессию</button>
+      <button onClick={() => { stopSession(); back(); }} className="btn" style={{ width: "100%", padding: 15, borderRadius: 16, border: "1.5px solid rgba(239,68,68,0.3)", background: "rgba(239,68,68,0.08)", color: "#ef4444", fontWeight: 800, fontSize: 15, cursor: "pointer", fontFamily: "inherit" }}>
+        ⏹ Завершить сессию
+      </button>
     </div>
   );
 }
 
+// ══════════════════════════════════════════════════
+//  DIARY SCREEN
+// ══════════════════════════════════════════════════
+function DiaryScreen({ go, shared }) {
+  const { catches } = shared;
+  const [filter, setFilter] = useState("all");
+  const fishTypes = [...new Set(catches.map(c => c.fish))];
+  const filtered = filter === "all" ? catches : catches.filter(c => c.fish === filter);
+  const totalWeight = catches.reduce((a, c) => a + (parseFloat(c.weight) || 0), 0).toFixed(1);
 
-// ═══════════ FORECAST ═══════════
+  return (
+    <div style={{ padding: "0 16px 16px" }}>
+      <div className="f0" style={{ padding: "16px 0" }}>
+        <div style={{ fontSize: 24, fontWeight: 900 }}>Дневник улова</div>
+        <div style={{ fontSize: 13, color: "#3a5470", marginTop: 2 }}>{catches.length} записей · {totalWeight} кг</div>
+      </div>
+
+      <button onClick={() => go(SCREENS.addCatch)} className="btn f1" style={{ width: "100%", padding: 14, borderRadius: 16, border: "none", background: "linear-gradient(135deg,#16a34a,#0891b2)", color: "#fff", fontWeight: 800, fontSize: 15, cursor: "pointer", fontFamily: "inherit", marginBottom: 12, boxShadow: "0 4px 20px rgba(22,163,74,0.3)" }}>
+        + Добавить улов
+      </button>
+
+      {fishTypes.length > 1 && (
+        <div className="f2" style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 4, marginBottom: 10 }}>
+          {["all", ...fishTypes].map(f => (
+            <button key={f} onClick={() => setFilter(f)} className="btn" style={{ padding: "6px 14px", borderRadius: 20, border: `1px solid ${filter === f ? "#4ade80" : "rgba(255,255,255,0.08)"}`, background: filter === f ? "rgba(74,222,128,0.15)" : "transparent", color: filter === f ? "#4ade80" : "#3a5470", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap", flexShrink: 0 }}>
+              {f === "all" ? "Все" : f}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {filtered.length === 0 ? (
+        <div className="f3" style={{ textAlign: "center", padding: "40px 0", color: "#2a3f55" }}>
+          <div style={{ fontSize: 40 }}>🎣</div>
+          <div style={{ marginTop: 12, fontSize: 14 }}>Пока нет уловов</div>
+          <div style={{ fontSize: 12, marginTop: 4 }}>Добавь первый!</div>
+        </div>
+      ) : (
+        filtered.map((c, i) => (
+          <button key={c.id} onClick={() => { haptic("light"); go(SCREENS.viewCatch, c); }} className="btn"
+            style={{ ...G.glass, width: "100%", textAlign: "left", display: "flex", alignItems: "center", gap: 12, padding: 14, cursor: "pointer", boxSizing: "border-box", borderRadius: 16, marginBottom: 8, animation: `fadeUp .4s ease ${i * 0.05}s both` }}>
+            <div style={{ width: 46, height: 46, borderRadius: 12, background: "rgba(74,222,128,0.08)", border: "1px solid rgba(74,222,128,0.15)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, flexShrink: 0 }}>🐟</div>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 700, fontSize: 15 }}>{c.fish}</div>
+              <div style={{ fontSize: 11, color: "#3a5470", marginTop: 2 }}>{c.location || "—"} · {c.bait || "—"}</div>
+            </div>
+            <div style={{ textAlign: "right" }}>
+              <div style={{ fontWeight: 900, fontSize: 17, color: "#4ade80" }}>{c.weight}<span style={{ fontSize: 10, color: "#3a5470" }}> кг</span></div>
+              <div style={{ fontSize: 10, color: "#2a3f55", marginTop: 2 }}>{c.date}</div>
+            </div>
+          </button>
+        ))
+      )}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════
+//  ADD CATCH SCREEN
+// ══════════════════════════════════════════════════
+function AddCatchScreen({ back, saveCatch, weather, locationName }) {
+  const [form, setForm] = useState({
+    fish: "", weight: "", length: "", location: locationName || "",
+    bait: "", gear: "", notes: "",
+    date: new Date().toLocaleDateString("ru-RU"),
+    weather: weather ? `${weather.temp}°C, ${weather.pressure}мм, ветер ${weather.wind}м/с` : "",
+  });
+
+  const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
+
+  const handleSave = () => {
+    if (!form.fish) { hapticNotify("error"); return; }
+    saveCatch(form);
+    hapticNotify("success");
+    back();
+  };
+
+  return (
+    <div style={{ padding: "0 16px 16px" }}>
+      <div className="f0" style={{ padding: "16px 0" }}>
+        <div style={{ fontSize: 22, fontWeight: 900 }}>Добавить улов</div>
+      </div>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        <Field label="Вид рыбы *">
+          <select value={form.fish} onChange={e => set("fish", e.target.value)} style={S.input}>
+            <option value="">Выбери рыбу</option>
+            {FISH_LIST.map(f => <option key={f} value={f}>{f}</option>)}
+          </select>
+        </Field>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+          <Field label="Вес (кг)">
+            <input type="number" step="0.1" placeholder="0.0" value={form.weight} onChange={e => set("weight", e.target.value)} style={S.input} />
+          </Field>
+          <Field label="Длина (см)">
+            <input type="number" placeholder="0" value={form.length} onChange={e => set("length", e.target.value)} style={S.input} />
+          </Field>
+        </div>
+
+        <Field label="Место">
+          <input type="text" placeholder="Название водоёма" value={form.location} onChange={e => set("location", e.target.value)} style={S.input} />
+        </Field>
+
+        <Field label="Приманка / наживка">
+          <select value={form.bait} onChange={e => set("bait", e.target.value)} style={S.input}>
+            <option value="">Выбери приманку</option>
+            {BAITS_LIST.map(b => <option key={b} value={b}>{b}</option>)}
+          </select>
+        </Field>
+
+        <Field label="Снасть">
+          <input type="text" placeholder="Например: спиннинг 2.4м" value={form.gear} onChange={e => set("gear", e.target.value)} style={S.input} />
+        </Field>
+
+        <Field label="Погода">
+          <input type="text" placeholder="Авто или введи вручную" value={form.weather} onChange={e => set("weather", e.target.value)} style={S.input} />
+        </Field>
+
+        <Field label="Заметки">
+          <textarea placeholder="Поведение рыбы, особенности..." value={form.notes} onChange={e => set("notes", e.target.value)}
+            style={{ ...S.input, resize: "none", minHeight: 72 }} />
+        </Field>
+      </div>
+
+      <button onClick={handleSave} className="btn" style={{ width: "100%", padding: 15, borderRadius: 16, border: "none", background: "linear-gradient(135deg,#16a34a,#0891b2)", color: "#fff", fontWeight: 800, fontSize: 16, cursor: "pointer", fontFamily: "inherit", marginTop: 14, boxShadow: "0 4px 20px rgba(22,163,74,0.3)" }}>
+        💾 Сохранить улов
+      </button>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════
+//  VIEW CATCH SCREEN
+// ══════════════════════════════════════════════════
+function ViewCatchScreen({ back, catchItem, deleteCatch }) {
+  if (!catchItem) return null;
+  const handleDelete = () => {
+    hapticNotify("warning");
+    deleteCatch(catchItem.id);
+    back();
+  };
+  return (
+    <div style={{ padding: "0 16px 16px" }}>
+      <div className="f0" style={{ padding: "16px 0" }}>
+        <div style={{ fontSize: 22, fontWeight: 900 }}>Карточка улова</div>
+      </div>
+      <div className="f1" style={{ ...G.glass, borderRadius: 20, overflow: "hidden", marginBottom: 10 }}>
+        <div style={{ height: 140, background: "linear-gradient(135deg,rgba(22,163,74,0.15),rgba(8,145,178,0.1))", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 64 }}>🐟</div>
+        <div style={{ padding: 16 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+            <div style={{ fontSize: 22, fontWeight: 900 }}>{catchItem.fish}</div>
+            <div style={{ padding: "4px 12px", borderRadius: 20, background: "rgba(74,222,128,0.12)", color: "#4ade80", fontSize: 13, fontWeight: 700 }}>🏆 Улов</div>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+            {[
+              { l: "Вес", v: catchItem.weight ? `${catchItem.weight} кг` : "—", c: "#fbbf24" },
+              { l: "Длина", v: catchItem.length ? `${catchItem.length} см` : "—", c: "#22d3ee" },
+              { l: "Дата", v: catchItem.date, c: "#a78bfa" },
+              { l: "Место", v: catchItem.location || "—", c: "#60a5fa" },
+              { l: "Приманка", v: catchItem.bait || "—", c: "#4ade80" },
+              { l: "Снасть", v: catchItem.gear || "—", c: "#f97316" },
+            ].map(s => (
+              <div key={s.l} style={{ padding: "10px 12px", borderRadius: 12, background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.05)" }}>
+                <div style={{ fontSize: 10, color: "#2a3f55", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5 }}>{s.l}</div>
+                <div style={{ fontSize: 14, fontWeight: 700, color: s.c, marginTop: 3 }}>{s.v}</div>
+              </div>
+            ))}
+          </div>
+          {catchItem.weather && (
+            <div style={{ marginTop: 8, padding: "10px 12px", borderRadius: 12, background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.05)" }}>
+              <div style={{ fontSize: 10, color: "#2a3f55", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5 }}>Погода</div>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "#6b8aad", marginTop: 3 }}>🌤 {catchItem.weather}</div>
+            </div>
+          )}
+          {catchItem.notes && (
+            <div style={{ marginTop: 8, padding: "10px 12px", borderRadius: 12, background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.05)" }}>
+              <div style={{ fontSize: 10, color: "#2a3f55", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5 }}>Заметки</div>
+              <div style={{ fontSize: 13, color: "#6b8aad", marginTop: 3 }}>{catchItem.notes}</div>
+            </div>
+          )}
+        </div>
+      </div>
+      <button onClick={handleDelete} className="btn" style={{ width: "100%", padding: 14, borderRadius: 16, border: "1.5px solid rgba(239,68,68,0.3)", background: "rgba(239,68,68,0.07)", color: "#ef4444", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>
+        🗑 Удалить запись
+      </button>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════
+//  FORECAST SCREEN
+// ══════════════════════════════════════════════════
 function ForecastScreen({ wd }) {
   const { weather, forecast, moon, biteScore, weatherLoading, locationName, currentHour } = wd;
+  const hourlyScores = useMemo(() => Array.from({ length: 20 }, (_, i) => {
+    const h = i + 4;
+    return { h, score: computeBiteScore(weather, moon, h) };
+  }), [weather, moon]);
+  const bestHour = hourlyScores.reduce((a, b) => a.score > b.score ? a : b, { h: 6, score: 0 });
 
-  // Почасовые скоры
-  const hourlyScores = useMemo(() => {
-    return Array.from({length:18},(_,i) => {
-      const h = i + 5;
-      return { h, score: computeBiteScore(weather, moon, h) };
-    });
-  }, [weather, moon]);
-
-  const bestHour = hourlyScores.reduce((a,b) => a.score > b.score ? a : b, {h:6,score:0});
-
-  // 5-дневный прогноз из OWM forecast
   const dailyForecast = useMemo(() => {
     if (!forecast) return null;
     const days = {};
@@ -589,150 +912,644 @@ function ForecastScreen({ wd }) {
       days[date].icons.push(item.weather[0]?.icon);
     });
     return Object.entries(days).slice(0, 5).map(([date, d], i) => {
-      const avgTemp = Math.round(d.temps.reduce((a,b)=>a+b,0)/d.temps.length);
-      const avgPressure = Math.round(d.pressures.reduce((a,b)=>a+b,0)/d.pressures.length);
-      const avgWind = (d.winds.reduce((a,b)=>a+b,0)/d.winds.length).toFixed(1);
-      const fakeWeather = { pressure: avgPressure, wind: avgWind, clouds: 50 };
+      const avgTemp = Math.round(d.temps.reduce((a, b) => a + b, 0) / d.temps.length);
+      const avgPressure = Math.round(d.pressures.reduce((a, b) => a + b, 0) / d.pressures.length);
+      const avgWind = (d.winds.reduce((a, b) => a + b, 0) / d.winds.length).toFixed(1);
+      const fakeW = { pressure: avgPressure, wind: avgWind, clouds: 50 };
       const dayMoon = getMoonPhase(new Date(date));
-      const morningScore = computeBiteScore(fakeWeather, dayMoon, 7);
-      const eveningScore = computeBiteScore(fakeWeather, dayMoon, 19);
-      const maxScore = Math.max(morningScore, eveningScore);
+      const maxScore = Math.max(computeBiteScore(fakeW, dayMoon, 7), computeBiteScore(fakeW, dayMoon, 19));
       const dt = new Date(date);
       return {
-        label: i===0 ? "Сегодня" : i===1 ? "Завтра" : dt.toLocaleDateString("ru-RU",{weekday:"short",day:"numeric"}),
-        temp: avgTemp, pressure: avgPressure, wind: avgWind,
-        maxScore, moon: dayMoon, icon: d.icons[Math.floor(d.icons.length/2)]
+        label: i === 0 ? "Сегодня" : i === 1 ? "Завтра" : dt.toLocaleDateString("ru-RU", { weekday: "short", day: "numeric" }),
+        temp: avgTemp, pressure: avgPressure, wind: avgWind, maxScore, moon: dayMoon, icon: d.icons[Math.floor(d.icons.length / 2)],
       };
     });
   }, [forecast]);
 
   return (
-    <div style={{padding:"0 20px 16px"}}>
-      <div className="f0" style={{padding:"16px 0"}}>
-        <div style={{fontSize:24,fontWeight:900}}>Прогноз клёва</div>
-        <div style={{fontSize:13,color:"#5a7a9b",marginTop:2}}>
-          {weather ? `${weather.cityName} · реальные данные` : "На основе алгоритма"}
+    <div style={{ padding: "0 16px 16px" }}>
+      <div className="f0" style={{ padding: "16px 0" }}>
+        <div style={{ fontSize: 24, fontWeight: 900 }}>Прогноз клёва</div>
+        <div style={{ fontSize: 13, color: "#3a5470", marginTop: 2 }}>
+          {weather ? `${weather.cityName} · реальные данные` : "Симуляция без API ключа"}
         </div>
       </div>
 
       {/* Main score */}
-      <div className="f1" style={{...S.card,textAlign:"center",background:"linear-gradient(135deg,#111d33,#0f2847)",border:"1.5px solid #264170",padding:24}}>
+      <div className="f1" style={{ ...G.glass, textAlign: "center", padding: "24px 20px", borderRadius: 24, marginBottom: 10 }}>
         {weatherLoading ? (
-          <div style={{padding:20,color:"#5a7a9b"}}>⏳ Загрузка погоды...</div>
-        ) : (<>
-          <div style={{position:"relative",width:100,height:100,margin:"0 auto 12px"}}>
-            <svg width={100} height={100} style={{transform:"rotate(-90deg)"}}><circle cx={50} cy={50} r={42} fill="none" stroke="#1e3454" strokeWidth={7}/><circle cx={50} cy={50} r={42} fill="none" stroke={getForecastColor(biteScore)} strokeWidth={7} strokeDasharray={263.9} strokeDashoffset={263.9*(1-biteScore/100)} strokeLinecap="round"/></svg>
-            <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center"}}><span style={{fontSize:32,fontWeight:900,color:getForecastColor(biteScore)}}>{biteScore}</span><span style={{fontSize:10,color:"#6b8aad"}}>%</span></div>
-          </div>
-          <div style={{fontSize:20,fontWeight:800,color:getForecastColor(biteScore)}}>{getForecastLabel(biteScore)} клёв</div>
-          <div style={{fontSize:13,color:"#5a7a9b",marginTop:4}}>Лучшее время: <strong style={{color:"#e2e8f0"}}>{bestHour.h}:00</strong> ({bestHour.score}%)</div>
-          {weather && <div style={{fontSize:12,color:"#3d5a80",marginTop:6}}>{weatherEmoji(weather.icon)} {weather.description}</div>}
-        </>)}
+          <div style={{ padding: 20, color: "#3a5470" }}>⏳ Загрузка...</div>
+        ) : (
+          <>
+            <div style={{ position: "relative", width: 110, height: 110, margin: "0 auto 14px" }}>
+              <svg width={110} height={110} style={{ transform: "rotate(-90deg)" }}>
+                <circle cx={55} cy={55} r={46} fill="none" stroke="rgba(255,255,255,0.05)" strokeWidth={7} />
+                <circle cx={55} cy={55} r={46} fill="none" stroke={getScoreColor(biteScore)} strokeWidth={7}
+                  strokeDasharray={289.0} strokeDashoffset={289.0 * (1 - biteScore / 100)} strokeLinecap="round" />
+              </svg>
+              <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
+                <span style={{ fontSize: 34, fontWeight: 900, color: getScoreColor(biteScore) }}>{biteScore}</span>
+                <span style={{ fontSize: 10, color: "#3a5470" }}>%</span>
+              </div>
+            </div>
+            <div style={{ fontSize: 22, fontWeight: 800, color: getScoreColor(biteScore) }}>{getScoreLabel(biteScore)} клёв</div>
+            <div style={{ fontSize: 13, color: "#3a5470", marginTop: 6 }}>Лучшее время: <strong style={{ color: "#e2e8f0" }}>{bestHour.h}:00</strong> ({bestHour.score}%)</div>
+            {weather && <div style={{ fontSize: 12, color: "#2a3f55", marginTop: 6 }}>{weatherEmoji(weather.icon)} {weather.description}</div>}
+          </>
+        )}
       </div>
 
-      {/* Real conditions */}
-      <div className="f2" style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginTop:2}}>
+      {/* Conditions grid */}
+      <div className="f2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 10 }}>
         {[
-          {l:"Давление",v:weather?.pressure||"—",u:"мм",c:"#60a5fa"},
-          {l:"Температура",v:weather?.temp||"—",u:"°C",c:"#f97316"},
-          {l:"Ветер",v:weather?`${weather.wind} ${windDir(weather.windDeg)}`:"—",u:"м/с",c:"#6b8aad"},
-          {l:"Вода ≈",v:weather?.waterTemp||"—",u:"°C",c:"#22d3ee"},
-        ].map((s,i)=>(
-          <div key={i} style={S.miniCard}><div style={{fontSize:10,color:"#5a7a9b",fontWeight:700}}>{s.l}</div><div style={{fontSize:18,fontWeight:900,color:s.c}}>{s.v}<span style={{fontSize:10,fontWeight:500,color:"#5a7a9b"}}> {s.u}</span></div></div>
+          { l: "Давление", v: weather?.pressure || "—", u: "мм рт.ст.", c: "#60a5fa" },
+          { l: "Температура", v: weather?.temp || "—", u: "°C", c: "#f97316" },
+          { l: "Ветер", v: weather ? `${weather.wind} ${windDir(weather.windDeg)}` : "—", u: "м/с", c: "#6b8aad" },
+          { l: "Темп. воды ≈", v: weather?.waterTemp || "—", u: "°C", c: "#22d3ee" },
+        ].map(s => (
+          <div key={s.l} style={{ ...G.glass, padding: 12, borderRadius: 14, textAlign: "center" }}>
+            <div style={{ fontSize: 10, color: "#2a3f55", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.8 }}>{s.l}</div>
+            <div style={{ fontSize: 20, fontWeight: 900, color: s.c, marginTop: 4 }}>{s.v}<span style={{ fontSize: 10, color: "#2a3f55", fontWeight: 400 }}> {s.u}</span></div>
+          </div>
         ))}
       </div>
 
       {/* Moon */}
-      <div className="f3" style={{...S.card,display:"flex",alignItems:"center",gap:14,marginTop:2}}>
-        <span style={{fontSize:36}}>{moon.icon}</span>
-        <div style={{flex:1}}><div style={{fontSize:11,color:"#6b8aad",fontWeight:600,textTransform:"uppercase"}}>Лунная фаза</div><div style={{fontSize:16,fontWeight:800,marginTop:2}}>{moon.name}</div></div>
-        <div style={{fontSize:14,fontWeight:800,color:"#fbbf24"}}>{Math.round(moon.factor*100)}%</div>
+      <div className="f3" style={{ ...G.glass, display: "flex", alignItems: "center", gap: 14, padding: 16, borderRadius: 16, marginBottom: 10 }}>
+        <span style={{ fontSize: 38 }}>{moon.icon}</span>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 10, color: "#2a3f55", fontWeight: 700, textTransform: "uppercase", letterSpacing: 1 }}>Лунная фаза</div>
+          <div style={{ fontSize: 17, fontWeight: 800, marginTop: 3 }}>{moon.name}</div>
+        </div>
+        <div style={{ fontSize: 15, fontWeight: 800, color: "#fbbf24" }}>{Math.round(moon.factor * 100)}%</div>
       </div>
 
       {/* Hourly */}
-      <div className="f4" style={S.card}>
-        <div style={{fontSize:12,color:"#6b8aad",fontWeight:700,textTransform:"uppercase",letterSpacing:1,marginBottom:10}}>По часам</div>
-        <div style={{display:"flex",alignItems:"flex-end",gap:2,height:70}}>
-          {hourlyScores.map(h=>{const isCur=h.h===currentHour;return(
-            <div key={h.h} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:3}}>
-              <div style={{width:"100%",height:`${h.score*.65}px`,minHeight:3,background:getForecastColor(h.score),borderRadius:2,opacity:isCur?1:.6,border:isCur?`1.5px solid ${getForecastColor(h.score)}`:"none"}}/>
-              {(h.h%3===0||isCur)&&<span style={{fontSize:8,color:isCur?"#e2e8f0":"#3d5a80",fontWeight:isCur?800:400}}>{h.h}</span>}
-            </div>
-          );})}
+      <div className="f4" style={{ ...G.glass, padding: 16, borderRadius: 16, marginBottom: 10 }}>
+        <div style={{ fontSize: 11, color: "#2a3f55", fontWeight: 700, textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 12 }}>По часам</div>
+        <div style={{ display: "flex", alignItems: "flex-end", gap: 2, height: 70 }}>
+          {hourlyScores.map(h => {
+            const isCur = h.h === currentHour;
+            return (
+              <div key={h.h} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
+                <div style={{ width: "100%", height: `${h.score * 0.62}px`, minHeight: 3, background: getForecastColor(h.score), borderRadius: 3, opacity: isCur ? 1 : 0.5, boxShadow: isCur ? `0 0 8px ${getForecastColor(h.score)}` : "none" }} />
+                {(h.h % 4 === 0 || isCur) && <span style={{ fontSize: 8, color: isCur ? "#e2e8f0" : "#2a3f55", fontWeight: isCur ? 800 : 400 }}>{h.h}</span>}
+              </div>
+            );
+          })}
         </div>
       </div>
 
-      {/* 5-day (only with real data) */}
+      {/* 5-day */}
       {dailyForecast && (
-        <div className="f5" style={S.card}>
-          <div style={{fontSize:12,color:"#6b8aad",fontWeight:700,textTransform:"uppercase",letterSpacing:1,marginBottom:10}}>Прогноз на 5 дней</div>
-          {dailyForecast.map((d,i)=>(
-            <div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 0",borderBottom:i<dailyForecast.length-1?"1px solid #1e3454":"none"}}>
-              <span style={{width:65,fontSize:13,fontWeight:i===0?800:500,color:i===0?"#e2e8f0":"#5a7a9b"}}>{d.label}</span>
-              <span style={{fontSize:16}}>{weatherEmoji(d.icon)}</span>
-              <span style={{fontSize:16}}>{d.moon.icon}</span>
-              <span style={{flex:1,fontSize:12,color:"#5a7a9b"}}>{d.temp}° · {d.wind}м/с</span>
-              <div style={{fontSize:14,fontWeight:800,color:getForecastColor(d.maxScore)}}>{d.maxScore}%</div>
+        <div className="f5" style={{ ...G.glass, padding: 16, borderRadius: 16, marginBottom: 10 }}>
+          <div style={{ fontSize: 11, color: "#2a3f55", fontWeight: 700, textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 12 }}>5 дней</div>
+          {dailyForecast.map((d, i) => (
+            <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 0", borderBottom: i < dailyForecast.length - 1 ? "1px solid rgba(255,255,255,0.04)" : "none" }}>
+              <span style={{ width: 60, fontSize: 13, fontWeight: i === 0 ? 800 : 500, color: i === 0 ? "#e2e8f0" : "#3a5470" }}>{d.label}</span>
+              <span style={{ fontSize: 15 }}>{weatherEmoji(d.icon)}</span>
+              <span style={{ fontSize: 15 }}>{d.moon.icon}</span>
+              <span style={{ flex: 1, fontSize: 12, color: "#3a5470" }}>{d.temp}° · {d.wind}м/с</span>
+              <span style={{ fontSize: 14, fontWeight: 800, color: getScoreColor(d.maxScore) }}>{d.maxScore}%</span>
             </div>
           ))}
         </div>
       )}
 
       {/* Tips */}
-      <div style={{...S.card,background:"linear-gradient(135deg,rgba(74,222,128,.06),#111d33)",border:"1px solid rgba(74,222,128,.2)"}}>
-        <div style={{fontSize:13,fontWeight:700,color:"#4ade80",marginBottom:6}}>💡 Рекомендации</div>
-        <div style={{fontSize:13,color:"#6b8aad",lineHeight:1.6}}>
-          {biteScore>=70?"Отличные условия! Активные приманки — воблеры, блёсны. Хищник активен утром и вечером."
-          :biteScore>=45?"Умеренный клёв. Натуральные наживки, медленная проводка. Перепады глубин."
-          :"Слабая активность. Мелкие приманки, деликатная оснастка. Глубина, укрытия."}
+      <div style={{ ...G.glass, padding: 16, borderRadius: 16, border: "1px solid rgba(74,222,128,0.15)" }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: "#4ade80", marginBottom: 8 }}>💡 Рекомендации</div>
+        <div style={{ fontSize: 13, color: "#3a5470", lineHeight: 1.7 }}>
+          {biteScore >= 70 ? "Отличные условия! Активные приманки — воблеры, блёсны. Хищник активен утром и вечером."
+            : biteScore >= 45 ? "Умеренный клёв. Натуральные наживки, медленная проводка. Перепады глубин."
+              : "Слабая активность. Мелкие приманки, деликатная оснастка. Глубина и укрытия."}
         </div>
       </div>
     </div>
   );
 }
 
+// helper for forecast color (same logic)
+function getForecastColor(s) { return s >= 70 ? "#4ade80" : s >= 45 ? "#fbbf24" : s >= 25 ? "#f97316" : "#ef4444"; }
 
-// ═══════════ SIMPLE SCREENS ═══════════
-// (Diary, Trophy, Stats, Gear, Spots, Social, Profile, Tournaments, Plan)
-// Те же что в прототипе — без изменений
+// ══════════════════════════════════════════════════
+//  STATS SCREEN
+// ══════════════════════════════════════════════════
+function StatsScreen({ shared }) {
+  const { catches, sessions } = shared;
+  const totalWeight = catches.reduce((a, c) => a + (parseFloat(c.weight) || 0), 0).toFixed(1);
+  const maxCatch = catches.reduce((a, c) => (parseFloat(c.weight) || 0) > (parseFloat(a.weight) || 0) ? c : a, {});
+  const fishCounts = catches.reduce((a, c) => { a[c.fish] = (a[c.fish] || 0) + 1; return a; }, {});
+  const topFish = Object.entries(fishCounts).sort((a, b) => b[1] - a[1]);
+  const baitCounts = catches.reduce((a, c) => { if (c.bait) a[c.bait] = (a[c.bait] || 0) + 1; return a; }, {});
+  const topBaits = Object.entries(baitCounts).sort((a, b) => b[1] - a[1]).slice(0, 3);
+  const totalSessionTime = sessions.reduce((a, s) => a + (s.duration || 0), 0);
+  const avgPerSession = sessions.length > 0 ? (catches.length / sessions.length).toFixed(1) : "0";
 
-function DiaryScreen({go}){
-  const items=[{sp:"Щука",w:3.2,loc:"Озеро Тихое",b:"Воблер",d:"19 мар"},{sp:"Окунь",w:0.8,loc:"Река Ока",b:"Блесна",d:"15 мар"},{sp:"Судак",w:2.1,loc:"Водохранилище",b:"Джиг",d:"12 мар"},{sp:"Карп",w:5.4,loc:"Пруд Заречный",b:"Бойл",d:"8 мар"},{sp:"Лещ",w:1.3,loc:"Река Волга",b:"Червь",d:"5 мар"}];
-  return(<div style={{padding:"0 20px 16px"}}>
-    <div className="f0" style={{padding:"16px 0"}}><div style={{fontSize:24,fontWeight:900}}>Дневник улова</div><div style={{fontSize:13,color:"#5a7a9b",marginTop:2}}>24 записи · 38.7 кг</div></div>
-    <button onClick={()=>go(SCREENS.trophy)} className="btn f1" style={{width:"100%",padding:14,borderRadius:14,border:"none",background:"linear-gradient(135deg,#3b82f6,#2563eb)",color:"#fff",fontWeight:800,fontSize:15,cursor:"pointer",fontFamily:"inherit",marginBottom:12,boxShadow:"0 4px 20px rgba(59,130,246,.3)"}}>+ Добавить улов</button>
-    {items.map((c,i)=>(<button key={i} onClick={()=>{haptic('light');go(SCREENS.trophy)}} className="btn" style={{...S.card,width:"100%",textAlign:"left",display:"flex",alignItems:"center",gap:12,padding:14,cursor:"pointer",boxSizing:"border-box"}}>
-      <div style={{width:44,height:44,borderRadius:11,background:"linear-gradient(135deg,rgba(14,165,233,.1),rgba(59,130,246,.06))",display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,flexShrink:0}}>🐟</div>
-      <div style={{flex:1}}><div style={{fontWeight:700,fontSize:14}}>{c.sp}</div><div style={{fontSize:11,color:"#5a7a9b",marginTop:1}}>{c.loc} · {c.b}</div></div>
-      <div style={{textAlign:"right"}}><div style={{fontWeight:900,fontSize:18}}>{c.w}<span style={{fontSize:10,color:"#5a7a9b"}}> кг</span></div><div style={{fontSize:10,color:"#3d5a80"}}>{c.d}</div></div>
-    </button>))}
-  </div>);
+  return (
+    <div style={{ padding: "0 16px 16px" }}>
+      <div className="f0" style={{ padding: "16px 0" }}>
+        <div style={{ fontSize: 24, fontWeight: 900 }}>Статистика</div>
+      </div>
+
+      <div className="f1" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 10 }}>
+        {[
+          { l: "Уловов", v: catches.length, c: "#60a5fa" },
+          { l: "Общий вес", v: `${totalWeight}кг`, c: "#fbbf24" },
+          { l: "Сессий", v: sessions.length, c: "#4ade80" },
+        ].map(s => (
+          <div key={s.l} style={{ ...G.glass, padding: 12, borderRadius: 14, textAlign: "center" }}>
+            <div style={{ fontSize: 20, fontWeight: 900, color: s.c }}>{s.v}</div>
+            <div style={{ fontSize: 9, color: "#2a3f55", fontWeight: 700, marginTop: 4, textTransform: "uppercase", letterSpacing: 0.5 }}>{s.l}</div>
+          </div>
+        ))}
+      </div>
+
+      {catches.length === 0 ? (
+        <div className="f2" style={{ textAlign: "center", padding: "40px 0", color: "#2a3f55" }}>
+          <div style={{ fontSize: 40 }}>📊</div>
+          <div style={{ marginTop: 12, fontSize: 14 }}>Нет данных пока</div>
+          <div style={{ fontSize: 12, marginTop: 4 }}>Добавь улов в дневнике</div>
+        </div>
+      ) : (
+        <>
+          {maxCatch.fish && (
+            <div className="f2" style={{ ...G.glass, padding: 16, borderRadius: 16, marginBottom: 10 }}>
+              <div style={{ fontSize: 11, color: "#2a3f55", fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>🏆 Рекордный улов</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <span style={{ fontSize: 28 }}>🐟</span>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 800, fontSize: 16 }}>{maxCatch.fish}</div>
+                  <div style={{ fontSize: 12, color: "#3a5470" }}>{maxCatch.location || "—"} · {maxCatch.date}</div>
+                </div>
+                <div style={{ fontWeight: 900, fontSize: 22, color: "#fbbf24" }}>{maxCatch.weight}<span style={{ fontSize: 11, color: "#3a5470" }}> кг</span></div>
+              </div>
+            </div>
+          )}
+
+          {topFish.length > 0 && (
+            <div className="f3" style={{ ...G.glass, padding: 16, borderRadius: 16, marginBottom: 10 }}>
+              <div style={{ fontSize: 11, color: "#2a3f55", fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, marginBottom: 12 }}>По видам рыб</div>
+              {topFish.slice(0, 5).map(([fish, count]) => (
+                <div key={fish} style={{ marginBottom: 10 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                    <span style={{ fontSize: 13, fontWeight: 700 }}>{fish}</span>
+                    <span style={{ fontSize: 12, color: "#3a5470" }}>{count} шт</span>
+                  </div>
+                  <div style={{ height: 5, background: "rgba(255,255,255,0.05)", borderRadius: 3 }}>
+                    <div style={{ height: "100%", width: `${(count / topFish[0][1]) * 100}%`, background: "linear-gradient(90deg,#4ade80,#22d3ee)", borderRadius: 3 }} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {topBaits.length > 0 && (
+            <div className="f4" style={{ ...G.glass, padding: 16, borderRadius: 16, marginBottom: 10 }}>
+              <div style={{ fontSize: 11, color: "#2a3f55", fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, marginBottom: 10 }}>🎣 Топ приманки</div>
+              {topBaits.map(([bait, count], i) => (
+                <div key={bait} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderBottom: i < topBaits.length - 1 ? "1px solid rgba(255,255,255,0.04)" : "none" }}>
+                  <span style={{ width: 22, height: 22, borderRadius: 6, background: "rgba(74,222,128,0.1)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 900, color: "#4ade80" }}>{i + 1}</span>
+                  <span style={{ flex: 1, fontSize: 13, fontWeight: 600 }}>{bait}</span>
+                  <span style={{ fontSize: 13, color: "#3a5470" }}>{count} улов.</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="f5" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+            <div style={{ ...G.glass, padding: 12, borderRadius: 14, textAlign: "center" }}>
+              <div style={{ fontSize: 11, color: "#2a3f55", fontWeight: 700 }}>НА СЕССИЮ</div>
+              <div style={{ fontSize: 22, fontWeight: 900, color: "#a78bfa", marginTop: 4 }}>{avgPerSession}</div>
+              <div style={{ fontSize: 10, color: "#2a3f55" }}>уловов/сессия</div>
+            </div>
+            <div style={{ ...G.glass, padding: 12, borderRadius: 14, textAlign: "center" }}>
+              <div style={{ fontSize: 11, color: "#2a3f55", fontWeight: 700 }}>ВРЕМЯ НА ВОДЕ</div>
+              <div style={{ fontSize: 22, fontWeight: 900, color: "#f97316", marginTop: 4 }}>{Math.round(totalSessionTime / 3600)}ч</div>
+              <div style={{ fontSize: 10, color: "#2a3f55" }}>всего</div>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
 }
 
-function TrophyScreen(){return(<div style={{padding:"0 20px 16px"}}><div className="f0" style={{padding:"16px 0"}}><div style={{fontSize:20,fontWeight:900}}>Карточка трофея</div></div><div className="f1" style={{...S.card,padding:0,overflow:"hidden"}}><div style={{height:180,background:"linear-gradient(135deg,#0c2a3e,#162440)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:64}}>🐟</div><div style={{padding:16}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}><div style={{fontSize:22,fontWeight:900}}>Щука</div><div style={{padding:"4px 12px",borderRadius:20,background:"rgba(234,179,8,.12)",color:"#fbbf24",fontSize:12,fontWeight:700}}>🏆 Трофей</div></div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginTop:14}}>{[{l:"Вес",v:"3.2 кг",c:"#f59e0b"},{l:"Длина",v:"58 см",c:"#22d3ee"},{l:"Дата",v:"19 мар",c:"#6b8aad"}].map(s=>(<div key={s.l} style={{textAlign:"center",padding:10,borderRadius:10,background:"rgba(30,52,84,.5)"}}><div style={{fontSize:18,fontWeight:900,color:s.c}}>{s.v}</div><div style={{fontSize:10,color:"#5a7a9b",marginTop:2}}>{s.l}</div></div>))}</div><div style={{marginTop:14,display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>{[{l:"Место",v:"📍 Озеро Тихое"},{l:"Приманка",v:"🎣 Воблер Rapala"},{l:"Снасть",v:"🎋 Maximus 2.4м"},{l:"Погода",v:"🌤 18°, 752мм"}].map(s=>(<div key={s.l} style={{padding:"8px 10px",borderRadius:8,background:"rgba(30,52,84,.3)"}}><div style={{fontSize:10,color:"#5a7a9b",fontWeight:600}}>{s.l}</div><div style={{fontSize:13,fontWeight:600,marginTop:2}}>{s.v}</div></div>))}</div></div></div></div>);}
+// ══════════════════════════════════════════════════
+//  GEAR SCREEN
+// ══════════════════════════════════════════════════
+function GearScreen({ go, shared }) {
+  const { gearItems, deleteGear } = shared;
 
-function StatsScreen(){const sp=[{n:"Щука",c:8,cl:"#4ade80"},{n:"Окунь",c:6,cl:"#60a5fa"},{n:"Судак",c:4,cl:"#fbbf24"},{n:"Карп",c:3,cl:"#f97316"},{n:"Лещ",c:3,cl:"#22d3ee"}];return(<div style={{padding:"0 20px 16px"}}><div className="f0" style={{padding:"16px 0"}}><div style={{fontSize:24,fontWeight:900}}>Статистика</div></div><div className="f1" style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>{[{l:"Уловов",v:"24",c:"#60a5fa"},{l:"Видов",v:"8",c:"#4ade80"},{l:"Вес",v:"38.7кг",c:"#fbbf24"}].map(s=>(<div key={s.l} style={S.miniCard}><div style={{fontSize:22,fontWeight:900,color:s.c}}>{s.v}</div><div style={{fontSize:10,color:"#5a7a9b",fontWeight:600,marginTop:2}}>{s.l}</div></div>))}</div><div className="f2" style={S.card}><div style={{fontSize:12,color:"#6b8aad",fontWeight:700,textTransform:"uppercase",letterSpacing:1,marginBottom:12}}>По видам рыб</div>{sp.map(s=>(<div key={s.n} style={{marginBottom:10}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:3}}><span style={{fontSize:13,fontWeight:700}}>{s.n}</span><span style={{fontSize:12,color:"#5a7a9b"}}>{s.c} шт</span></div><div style={{height:5,background:"#1e3454",borderRadius:3}}><div style={{height:"100%",width:`${s.c/8*100}%`,background:s.cl,borderRadius:3}}/></div></div>))}</div></div>);}
+  return (
+    <div style={{ padding: "0 16px 16px" }}>
+      <div className="f0" style={{ padding: "16px 0" }}>
+        <div style={{ fontSize: 24, fontWeight: 900 }}>Снаряжение</div>
+        <div style={{ fontSize: 13, color: "#3a5470", marginTop: 2 }}>{gearItems.length} предметов</div>
+      </div>
 
-function GearScreen(){return(<div style={{padding:"0 20px 16px"}}><div className="f0" style={{padding:"16px 0"}}><div style={{fontSize:24,fontWeight:900}}>Снаряжение</div></div>{[{icon:"🎋",n:"Maximus BW 2.4м",sub:"Спиннинг · 5-25г",st:"12 улов."},{icon:"🎡",n:"Shimano Stradic 2500",sub:"Катушка · 5.0:1",st:"9 улов."},{icon:"🐛",n:"Rapala X-Rap 10",sub:"Воблер · 10см",st:"8 улов."}].map((g,i)=>(<div key={i} style={{...S.card,display:"flex",alignItems:"center",gap:12,padding:14}}><div style={{fontSize:28,width:48,height:48,borderRadius:12,background:"rgba(168,139,250,.08)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{g.icon}</div><div style={{flex:1}}><div style={{fontWeight:700,fontSize:14}}>{g.n}</div><div style={{fontSize:11,color:"#5a7a9b",marginTop:1}}>{g.sub}</div></div><div style={{fontSize:12,color:"#a78bfa",fontWeight:700}}>{g.st}</div></div>))}<button className="btn" style={{width:"100%",padding:14,borderRadius:14,border:"1.5px dashed #264170",background:"transparent",color:"#6b8aad",fontWeight:700,fontSize:14,cursor:"pointer",fontFamily:"inherit",marginTop:4}}>+ Добавить</button></div>);}
+      <button onClick={() => go(SCREENS.addGear)} className="btn f1" style={{ width: "100%", padding: 14, borderRadius: 16, border: "none", background: "linear-gradient(135deg,#7c3aed,#4f46e5)", color: "#fff", fontWeight: 800, fontSize: 15, cursor: "pointer", fontFamily: "inherit", marginBottom: 12, boxShadow: "0 4px 20px rgba(124,58,237,0.3)" }}>
+        + Добавить снаряжение
+      </button>
 
-function SpotsScreen(){return(<div style={{padding:"0 20px 16px"}}><div className="f0" style={{padding:"16px 0"}}><div style={{fontSize:24,fontWeight:900}}>Мои места</div></div>{[{n:"Озеро Тихое",c:8,w:12.4,icon:"🏞️",top:true},{n:"Река Ока",c:5,w:8.1,icon:"🌊"},{n:"Пруд Заречный",c:4,w:9.8,icon:"🏕️"}].map((s,i)=>(<div key={i} style={{...S.card,display:"flex",gap:12,padding:14}}><div style={{width:48,height:48,borderRadius:12,background:"linear-gradient(135deg,rgba(14,165,233,.08),rgba(59,130,246,.05))",display:"flex",alignItems:"center",justifyContent:"center",fontSize:24,flexShrink:0}}>{s.icon}</div><div style={{flex:1}}><div style={{display:"flex",gap:8,alignItems:"center"}}><span style={{fontWeight:800,fontSize:15}}>{s.n}</span>{s.top&&<span style={{fontSize:10,padding:"2px 8px",borderRadius:10,background:"rgba(234,179,8,.12)",color:"#fbbf24",fontWeight:700}}>⭐</span>}</div><div style={{display:"flex",gap:14,marginTop:6}}><div><span style={{fontWeight:900,color:"#60a5fa"}}>{s.c}</span><span style={{fontSize:10,color:"#5a7a9b"}}> улов.</span></div><div><span style={{fontWeight:900,color:"#4ade80"}}>{s.w}</span><span style={{fontSize:10,color:"#5a7a9b"}}> кг</span></div></div></div></div>))}</div>);}
+      {gearItems.length === 0 ? (
+        <div className="f2" style={{ textAlign: "center", padding: "40px 0", color: "#2a3f55" }}>
+          <div style={{ fontSize: 40 }}>🎒</div>
+          <div style={{ marginTop: 12, fontSize: 14 }}>Инвентарь пуст</div>
+          <div style={{ fontSize: 12, marginTop: 4 }}>Добавь первый предмет!</div>
+        </div>
+      ) : (
+        gearItems.map((g, i) => (
+          <div key={g.id} style={{ ...G.glass, display: "flex", alignItems: "center", gap: 12, padding: 14, borderRadius: 16, marginBottom: 8, animation: `fadeUp .4s ease ${i * 0.05}s both` }}>
+            <div style={{ width: 48, height: 48, borderRadius: 12, background: "rgba(167,139,250,0.08)", border: "1px solid rgba(167,139,250,0.15)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, flexShrink: 0 }}>
+              {g.type === "Удилище" ? "🎋" : g.type === "Катушка" ? "🎡" : g.type === "Приманка" ? "🐛" : g.type === "Эхолот" ? "📡" : "🎒"}
+            </div>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 700, fontSize: 14 }}>{g.name}</div>
+              <div style={{ fontSize: 11, color: "#3a5470", marginTop: 2 }}>{g.type}{g.brand ? ` · ${g.brand}` : ""}</div>
+            </div>
+            <button onClick={() => { haptic("light"); deleteGear(g.id); }} className="btn" style={{ padding: "6px 10px", borderRadius: 10, border: "1px solid rgba(239,68,68,0.2)", background: "transparent", color: "#ef4444", fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>✕</button>
+          </div>
+        ))
+      )}
+    </div>
+  );
+}
 
-function SocialScreen(){return(<div style={{padding:"0 20px 16px"}}><div className="f0" style={{padding:"16px 0"}}><div style={{fontSize:24,fontWeight:900}}>Лента</div></div>{[{user:"Алексей",av:"🧔",fish:"Щука 4.8 кг",loc:"Волга",time:"2ч",likes:14},{user:"Марина",av:"👩",fish:"Форель 1.2 кг",loc:"Озеро Светлое",time:"5ч",likes:8}].map((p,i)=>(<div key={i} style={S.card}><div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}><div style={{width:36,height:36,borderRadius:"50%",background:"linear-gradient(135deg,#264170,#1e3454)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18}}>{p.av}</div><div><div style={{fontWeight:700,fontSize:14}}>{p.user}</div><div style={{fontSize:11,color:"#3d5a80"}}>{p.time} назад</div></div></div><div style={{padding:14,borderRadius:12,background:"rgba(30,52,84,.3)",marginBottom:10}}><div style={{fontSize:16,fontWeight:800}}>🐟 {p.fish}</div><div style={{fontSize:12,color:"#5a7a9b",marginTop:4}}>📍 {p.loc}</div></div><div style={{display:"flex",gap:16}}><span style={{fontSize:13,color:"#6b8aad"}}>❤️ {p.likes}</span><span style={{fontSize:13,color:"#6b8aad"}}>💬</span></div></div>))}</div>);}
+// ══════════════════════════════════════════════════
+//  ADD GEAR SCREEN
+// ══════════════════════════════════════════════════
+function AddGearScreen({ back, saveGear }) {
+  const [form, setForm] = useState({ name: "", type: "", brand: "", notes: "" });
+  const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
+  const handleSave = () => {
+    if (!form.name) { hapticNotify("error"); return; }
+    saveGear(form);
+    hapticNotify("success");
+    back();
+  };
+  return (
+    <div style={{ padding: "0 16px 16px" }}>
+      <div className="f0" style={{ padding: "16px 0" }}>
+        <div style={{ fontSize: 22, fontWeight: 900 }}>Добавить снаряжение</div>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        <Field label="Название *">
+          <input type="text" placeholder="Например: Shimano Stradic 2500" value={form.name} onChange={e => set("name", e.target.value)} style={S.input} />
+        </Field>
+        <Field label="Тип">
+          <select value={form.type} onChange={e => set("type", e.target.value)} style={S.input}>
+            <option value="">Выбери тип</option>
+            {GEAR_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+          </select>
+        </Field>
+        <Field label="Бренд">
+          <input type="text" placeholder="Shimano, Daiwa, Abu Garcia..." value={form.brand} onChange={e => set("brand", e.target.value)} style={S.input} />
+        </Field>
+        <Field label="Заметки">
+          <textarea placeholder="Характеристики, особенности..." value={form.notes} onChange={e => set("notes", e.target.value)} style={{ ...S.input, resize: "none", minHeight: 72 }} />
+        </Field>
+      </div>
+      <button onClick={handleSave} className="btn" style={{ width: "100%", padding: 15, borderRadius: 16, border: "none", background: "linear-gradient(135deg,#7c3aed,#4f46e5)", color: "#fff", fontWeight: 800, fontSize: 16, cursor: "pointer", fontFamily: "inherit", marginTop: 14, boxShadow: "0 4px 20px rgba(124,58,237,0.3)" }}>
+        💾 Сохранить
+      </button>
+    </div>
+  );
+}
 
-function ProfileScreen(){const un=tg?.initDataUnsafe?.user?.first_name||"FisherPro";const uh=tg?.initDataUnsafe?.user?.username||"fisherpro";return(<div style={{padding:"0 20px 16px"}}><div className="f0" style={{textAlign:"center",padding:"20px 0"}}><div style={{width:80,height:80,borderRadius:"50%",background:"linear-gradient(135deg,#264170,#1e3454)",margin:"0 auto 12px",display:"flex",alignItems:"center",justifyContent:"center",fontSize:36,border:"3px solid #4ade80"}}>🎣</div><div style={{fontSize:22,fontWeight:900}}>{un}</div><div style={{fontSize:13,color:"#5a7a9b",marginTop:2}}>@{uh}</div></div><div className="f1" style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>{[{l:"Уловов",v:"124"},{l:"Вес",v:"187 кг"},{l:"Трофеев",v:"8"}].map(s=>(<div key={s.l} style={{...S.miniCard,textAlign:"center"}}><div style={{fontSize:20,fontWeight:900,color:"#4ade80"}}>{s.v}</div><div style={{fontSize:10,color:"#5a7a9b",marginTop:2}}>{s.l}</div></div>))}</div><div className="f2" style={S.card}><div style={{fontSize:12,color:"#6b8aad",fontWeight:700,textTransform:"uppercase",letterSpacing:1,marginBottom:10}}>🏅 Достижения</div><div style={{display:"flex",flexWrap:"wrap",gap:8}}>{["🐟 Первый улов","🏆 Трофейная щука","💯 100 поклёвок","🎯 500 забросов"].map(a=>(<span key={a} style={{padding:"6px 12px",borderRadius:20,background:"rgba(74,222,128,.08)",border:"1px solid rgba(74,222,128,.2)",fontSize:12,fontWeight:600,color:"#4ade80"}}>{a}</span>))}</div></div></div>);}
+// ══════════════════════════════════════════════════
+//  SPOTS SCREEN
+// ══════════════════════════════════════════════════
+function SpotsScreen({ go, shared }) {
+  const { spots, deleteSpot } = shared;
+  return (
+    <div style={{ padding: "0 16px 16px" }}>
+      <div className="f0" style={{ padding: "16px 0" }}>
+        <div style={{ fontSize: 24, fontWeight: 900 }}>Мои места</div>
+        <div style={{ fontSize: 13, color: "#3a5470", marginTop: 2 }}>{spots.length} точек</div>
+      </div>
+      <button onClick={() => go(SCREENS.addSpot)} className="btn f1" style={{ width: "100%", padding: 14, borderRadius: 16, border: "none", background: "linear-gradient(135deg,#0891b2,#0e7490)", color: "#fff", fontWeight: 800, fontSize: 15, cursor: "pointer", fontFamily: "inherit", marginBottom: 12, boxShadow: "0 4px 20px rgba(8,145,178,0.3)" }}>
+        + Добавить место
+      </button>
+      {spots.length === 0 ? (
+        <div className="f2" style={{ textAlign: "center", padding: "40px 0", color: "#2a3f55" }}>
+          <div style={{ fontSize: 40 }}>🗺</div>
+          <div style={{ marginTop: 12, fontSize: 14 }}>Мест пока нет</div>
+          <div style={{ fontSize: 12, marginTop: 4 }}>Добавь первую точку!</div>
+        </div>
+      ) : (
+        spots.map((s, i) => (
+          <div key={s.id} style={{ ...G.glass, display: "flex", gap: 12, padding: 14, borderRadius: 16, marginBottom: 8, animation: `fadeUp .4s ease ${i * 0.05}s both` }}>
+            <div style={{ width: 48, height: 48, borderRadius: 12, background: "rgba(34,211,238,0.08)", border: "1px solid rgba(34,211,238,0.15)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, flexShrink: 0 }}>
+              {s.type === "Река" ? "🌊" : s.type === "Озеро" ? "🏞️" : s.type === "Пруд" ? "🏕️" : s.type === "Водохранилище" ? "💧" : "📍"}
+            </div>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 800, fontSize: 15 }}>{s.name}</div>
+              <div style={{ fontSize: 11, color: "#3a5470", marginTop: 2 }}>{s.type || "—"}{s.fish ? ` · ${s.fish}` : ""}</div>
+              {s.notes && <div style={{ fontSize: 11, color: "#2a3f55", marginTop: 3 }}>{s.notes}</div>}
+            </div>
+            <button onClick={() => { haptic("light"); deleteSpot(s.id); }} className="btn" style={{ padding: "6px 10px", borderRadius: 10, border: "1px solid rgba(239,68,68,0.2)", background: "transparent", color: "#ef4444", fontSize: 14, cursor: "pointer", fontFamily: "inherit", alignSelf: "flex-start" }}>✕</button>
+          </div>
+        ))
+      )}
+    </div>
+  );
+}
 
-function TournamentsScreen(){return(<div style={{padding:"0 20px 16px"}}><div className="f0" style={{padding:"16px 0"}}><div style={{fontSize:24,fontWeight:900}}>Турниры</div></div>{[{n:"Щучий март",type:"Публичный",p:"32 уч.",end:"31 мар",prize:"🏆"},{n:"Друзья на Волге",type:"Приватный",p:"5 друзей",end:"25 мар",prize:"🎖"}].map((t,i)=>(<div key={i} style={{...S.card,padding:16}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}><div style={{fontSize:17,fontWeight:800}}>{t.prize} {t.n}</div><span style={{fontSize:10,padding:"3px 10px",borderRadius:10,background:"rgba(74,222,128,.12)",color:"#4ade80",fontWeight:700}}>{t.type}</span></div><div style={{display:"flex",gap:16,fontSize:12,color:"#5a7a9b"}}><span>👥 {t.p}</span><span>📅 до {t.end}</span></div></div>))}</div>);}
+// ══════════════════════════════════════════════════
+//  ADD SPOT SCREEN
+// ══════════════════════════════════════════════════
+function AddSpotScreen({ back, saveSpot, locationName }) {
+  const [form, setForm] = useState({ name: "", type: "", fish: "", notes: "" });
+  const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
+  const handleSave = () => {
+    if (!form.name) { hapticNotify("error"); return; }
+    saveSpot(form);
+    hapticNotify("success");
+    back();
+  };
+  return (
+    <div style={{ padding: "0 16px 16px" }}>
+      <div className="f0" style={{ padding: "16px 0" }}>
+        <div style={{ fontSize: 22, fontWeight: 900 }}>Добавить место</div>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        <Field label="Название *">
+          <input type="text" placeholder="Озеро Тихое, Река Ока..." value={form.name} onChange={e => set("name", e.target.value)} style={S.input} />
+        </Field>
+        <Field label="Тип водоёма">
+          <select value={form.type} onChange={e => set("type", e.target.value)} style={S.input}>
+            <option value="">Выбери тип</option>
+            {["Река","Озеро","Пруд","Водохранилище","Карьер","Море","Канал"].map(t => <option key={t} value={t}>{t}</option>)}
+          </select>
+        </Field>
+        <Field label="Какая рыба водится">
+          <input type="text" placeholder="Щука, окунь, карп..." value={form.fish} onChange={e => set("fish", e.target.value)} style={S.input} />
+        </Field>
+        <Field label="Заметки">
+          <textarea placeholder="Особенности места, секреты..." value={form.notes} onChange={e => set("notes", e.target.value)} style={{ ...S.input, resize: "none", minHeight: 72 }} />
+        </Field>
+      </div>
+      <button onClick={handleSave} className="btn" style={{ width: "100%", padding: 15, borderRadius: 16, border: "none", background: "linear-gradient(135deg,#0891b2,#0e7490)", color: "#fff", fontWeight: 800, fontSize: 16, cursor: "pointer", fontFamily: "inherit", marginTop: 14, boxShadow: "0 4px 20px rgba(8,145,178,0.3)" }}>
+        💾 Сохранить место
+      </button>
+    </div>
+  );
+}
 
-function PlanScreen({wd}){const{weather}=wd;return(<div style={{padding:"0 20px 16px"}}><div className="f0" style={{padding:"16px 0"}}><div style={{fontSize:24,fontWeight:900}}>Планирование</div></div><div className="f1" style={S.card}><div style={{fontSize:12,color:"#6b8aad",fontWeight:700,textTransform:"uppercase",letterSpacing:1,marginBottom:10}}>📅 Ближайшие выезды</div>{[{d:"22 мар, Сб",loc:"Озеро Тихое",fc:78,fr:2},{d:"29 мар, Сб",loc:"Река Ока",fc:65,fr:0}].map((p,i)=>(<div key={i} style={{padding:"12px 0",borderBottom:i===0?"1px solid #1e3454":"none",display:"flex",justifyContent:"space-between",alignItems:"center"}}><div><div style={{fontWeight:700,fontSize:14}}>{p.d}</div><div style={{fontSize:12,color:"#5a7a9b",marginTop:2}}>📍 {p.loc}{p.fr>0?` · 👥 +${p.fr}`:""}</div></div><div style={{padding:"4px 10px",borderRadius:10,background:p.fc>=70?"rgba(74,222,128,.12)":"rgba(234,179,8,.12)",color:p.fc>=70?"#4ade80":"#fbbf24",fontSize:12,fontWeight:800}}>{p.fc}%</div></div>))}</div><button className="btn f2" style={{width:"100%",padding:14,borderRadius:14,border:"1.5px dashed #264170",background:"transparent",color:"#6b8aad",fontWeight:700,fontSize:14,cursor:"pointer",fontFamily:"inherit"}}>+ Запланировать</button></div>);}
+// ══════════════════════════════════════════════════
+//  SOCIAL SCREEN
+// ══════════════════════════════════════════════════
+function SocialScreen() {
+  const posts = [
+    { user: "Алексей", av: "🧔", fish: "Щука 4.8 кг", loc: "Волга, Самара", time: "2ч", likes: 14, bait: "Воблер Rapala" },
+    { user: "Марина", av: "👩", fish: "Форель 1.2 кг", loc: "Озеро Светлое", time: "5ч", likes: 8, bait: "Блесна" },
+    { user: "Дмитрий", av: "👨‍🦱", fish: "Судак 3.1 кг", loc: "Волгоград", time: "8ч", likes: 22, bait: "Джиг 20г" },
+    { user: "Сергей", av: "🧑", fish: "Карп 6.3 кг", loc: "Пруд Зеркальный", time: "1д", likes: 31, bait: "Бойл" },
+  ];
+  return (
+    <div style={{ padding: "0 16px 16px" }}>
+      <div className="f0" style={{ padding: "16px 0" }}>
+        <div style={{ fontSize: 24, fontWeight: 900 }}>Лента</div>
+        <div style={{ fontSize: 13, color: "#3a5470", marginTop: 2 }}>Уловы сообщества</div>
+      </div>
+      {posts.map((p, i) => (
+        <div key={i} style={{ ...G.glass, padding: 16, borderRadius: 20, marginBottom: 10, animation: `fadeUp .4s ease ${i * 0.07}s both` }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+            <div style={{ width: 38, height: 38, borderRadius: "50%", background: "linear-gradient(135deg,#264170,#1e3454)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, border: "1.5px solid rgba(255,255,255,0.08)" }}>{p.av}</div>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 700, fontSize: 14 }}>{p.user}</div>
+              <div style={{ fontSize: 11, color: "#2a3f55" }}>{p.time} назад</div>
+            </div>
+          </div>
+          <div style={{ padding: 14, borderRadius: 14, background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.05)", marginBottom: 10 }}>
+            <div style={{ fontSize: 16, fontWeight: 800 }}>🐟 {p.fish}</div>
+            <div style={{ fontSize: 12, color: "#3a5470", marginTop: 4 }}>📍 {p.loc}</div>
+            <div style={{ fontSize: 12, color: "#3a5470", marginTop: 2 }}>🎣 {p.bait}</div>
+          </div>
+          <div style={{ display: "flex", gap: 16, alignItems: "center" }}>
+            <button className="btn" onClick={() => haptic("light")} style={{ background: "none", border: "none", color: "#ef4444", fontSize: 13, cursor: "pointer", fontFamily: "inherit", display: "flex", alignItems: "center", gap: 4 }}>
+              ❤️ {p.likes}
+            </button>
+            <button className="btn" onClick={() => haptic("light")} style={{ background: "none", border: "none", color: "#3a5470", fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>
+              💬 Комментарий
+            </button>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
 
+// ══════════════════════════════════════════════════
+//  PROFILE SCREEN
+// ══════════════════════════════════════════════════
+function ProfileScreen({ shared, userName }) {
+  const { catches, sessions, gearItems, spots } = shared;
+  const totalWeight = catches.reduce((a, c) => a + (parseFloat(c.weight) || 0), 0).toFixed(1);
+  const maxCatch = catches.reduce((a, c) => (parseFloat(c.weight) || 0) > (parseFloat(a.weight) || 0) ? c : a, { weight: 0 });
+  const un = tg?.initDataUnsafe?.user?.first_name || userName || "FisherPro";
+  const uh = tg?.initDataUnsafe?.user?.username || "fisherpro";
 
-// ═══════════ STYLES ═══════════
+  const achievements = [
+    { icon: "🐟", label: "Первый улов", earned: catches.length >= 1 },
+    { icon: "🎯", label: "10 уловов", earned: catches.length >= 10 },
+    { icon: "⚖️", label: "Трофей 3кг+", earned: parseFloat(maxCatch.weight) >= 3 },
+    { icon: "📍", label: "5 мест", earned: spots.length >= 5 },
+    { icon: "🎒", label: "Инвентарь", earned: gearItems.length >= 3 },
+    { icon: "⏱", label: "10 сессий", earned: sessions.length >= 10 },
+  ];
+
+  return (
+    <div style={{ padding: "0 16px 16px" }}>
+      <div className="f0" style={{ textAlign: "center", padding: "20px 0 16px" }}>
+        <div style={{ width: 80, height: 80, borderRadius: "50%", background: "linear-gradient(135deg,#16a34a,#0891b2)", margin: "0 auto 12px", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 36, border: "3px solid rgba(74,222,128,0.4)", boxShadow: "0 0 30px rgba(74,222,128,0.2)" }}>🎣</div>
+        <div style={{ fontSize: 22, fontWeight: 900 }}>{un}</div>
+        <div style={{ fontSize: 13, color: "#3a5470", marginTop: 3 }}>@{uh}</div>
+      </div>
+
+      <div className="f1" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 10 }}>
+        {[
+          { l: "Уловов", v: catches.length, c: "#4ade80" },
+          { l: "Общий вес", v: `${totalWeight}кг`, c: "#fbbf24" },
+          { l: "Мест", v: spots.length, c: "#22d3ee" },
+        ].map(s => (
+          <div key={s.l} style={{ ...G.glass, padding: 12, borderRadius: 14, textAlign: "center" }}>
+            <div style={{ fontSize: 20, fontWeight: 900, color: s.c }}>{s.v}</div>
+            <div style={{ fontSize: 10, color: "#2a3f55", marginTop: 3, fontWeight: 600 }}>{s.l}</div>
+          </div>
+        ))}
+      </div>
+
+      <div className="f2" style={{ ...G.glass, padding: 16, borderRadius: 16, marginBottom: 10 }}>
+        <div style={{ fontSize: 11, color: "#2a3f55", fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, marginBottom: 12 }}>🏅 Достижения</div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+          {achievements.map(a => (
+            <div key={a.label} style={{ textAlign: "center", padding: "10px 6px", borderRadius: 12, background: a.earned ? "rgba(74,222,128,0.08)" : "rgba(255,255,255,0.02)", border: `1px solid ${a.earned ? "rgba(74,222,128,0.2)" : "rgba(255,255,255,0.04)"}`, opacity: a.earned ? 1 : 0.35 }}>
+              <div style={{ fontSize: 22 }}>{a.icon}</div>
+              <div style={{ fontSize: 10, color: a.earned ? "#4ade80" : "#2a3f55", marginTop: 4, fontWeight: 600, lineHeight: 1.3 }}>{a.label}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {maxCatch.fish && (
+        <div className="f3" style={{ ...G.glass, padding: 16, borderRadius: 16 }}>
+          <div style={{ fontSize: 11, color: "#2a3f55", fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>🏆 Лучший трофей</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <span style={{ fontSize: 28 }}>🐟</span>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 800, fontSize: 16 }}>{maxCatch.fish}</div>
+              <div style={{ fontSize: 12, color: "#3a5470" }}>{maxCatch.location || "—"}</div>
+            </div>
+            <div style={{ fontWeight: 900, fontSize: 22, color: "#fbbf24" }}>{maxCatch.weight}<span style={{ fontSize: 11, color: "#3a5470" }}>кг</span></div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════
+//  TOURNAMENTS SCREEN
+// ══════════════════════════════════════════════════
+function TournamentsScreen() {
+  const tournaments = [
+    { n: "Щучий март", type: "Публичный", p: 32, end: "31 мар", prize: "🏆", status: "active", desc: "Самая крупная щука побеждает" },
+    { n: "Друзья на Волге", type: "Приватный", p: 5, end: "25 мар", prize: "🎖", status: "active", desc: "Приватный между друзьями" },
+    { n: "Весенний карп", type: "Публичный", p: 18, end: "15 апр", prize: "🥇", status: "upcoming", desc: "Карп · фидер · 48 часов" },
+  ];
+  return (
+    <div style={{ padding: "0 16px 16px" }}>
+      <div className="f0" style={{ padding: "16px 0" }}>
+        <div style={{ fontSize: 24, fontWeight: 900 }}>Турниры</div>
+      </div>
+      {tournaments.map((t, i) => (
+        <div key={i} style={{ ...G.glass, padding: 16, borderRadius: 20, marginBottom: 10, animation: `fadeUp .4s ease ${i * 0.07}s both` }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }}>
+            <div>
+              <div style={{ fontSize: 17, fontWeight: 800 }}>{t.prize} {t.n}</div>
+              <div style={{ fontSize: 12, color: "#3a5470", marginTop: 3 }}>{t.desc}</div>
+            </div>
+            <span style={{ fontSize: 10, padding: "4px 10px", borderRadius: 10, background: t.status === "active" ? "rgba(74,222,128,0.12)" : "rgba(251,191,36,0.12)", color: t.status === "active" ? "#4ade80" : "#fbbf24", fontWeight: 700, whiteSpace: "nowrap", flexShrink: 0 }}>
+              {t.status === "active" ? "Активен" : "Скоро"}
+            </span>
+          </div>
+          <div style={{ display: "flex", gap: 16, fontSize: 12, color: "#3a5470", marginBottom: 12 }}>
+            <span>👥 {t.p} участников</span>
+            <span>📅 до {t.end}</span>
+            <span>🔒 {t.type}</span>
+          </div>
+          <button className="btn" onClick={() => haptic("medium")} style={{ width: "100%", padding: "10px", borderRadius: 12, border: "1px solid rgba(74,222,128,0.25)", background: "rgba(74,222,128,0.06)", color: "#4ade80", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>
+            Участвовать
+          </button>
+        </div>
+      ))}
+      <button className="btn" onClick={() => haptic("medium")} style={{ width: "100%", padding: 14, borderRadius: 16, border: "1.5px dashed rgba(255,255,255,0.1)", background: "transparent", color: "#3a5470", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>
+        + Создать турнир
+      </button>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════
+//  PLAN SCREEN
+// ══════════════════════════════════════════════════
+function PlanScreen({ wd }) {
+  const { weather, biteScore } = wd;
+  const plans = [
+    { d: "22 мар, Сб", loc: "Озеро Тихое", fc: 78, friends: 2 },
+    { d: "29 мар, Сб", loc: "Река Ока", fc: 65, friends: 0 },
+    { d: "5 апр, Сб", loc: "Волга", fc: 52, friends: 4 },
+  ];
+  return (
+    <div style={{ padding: "0 16px 16px" }}>
+      <div className="f0" style={{ padding: "16px 0" }}>
+        <div style={{ fontSize: 24, fontWeight: 900 }}>Планирование</div>
+      </div>
+
+      <div className="f1" style={{ ...G.glass, padding: 16, borderRadius: 20, marginBottom: 10 }}>
+        <div style={{ fontSize: 11, color: "#2a3f55", fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, marginBottom: 12 }}>📅 Запланированные выезды</div>
+        {plans.map((p, i) => (
+          <div key={i} style={{ padding: "12px 0", borderBottom: i < plans.length - 1 ? "1px solid rgba(255,255,255,0.04)" : "none" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 14 }}>{p.d}</div>
+                <div style={{ fontSize: 12, color: "#3a5470", marginTop: 2 }}>📍 {p.loc}{p.friends > 0 ? ` · 👥 +${p.friends}` : ""}</div>
+              </div>
+              <div style={{ padding: "4px 12px", borderRadius: 10, background: p.fc >= 70 ? "rgba(74,222,128,0.12)" : "rgba(251,191,36,0.12)", color: p.fc >= 70 ? "#4ade80" : "#fbbf24", fontSize: 13, fontWeight: 800 }}>{p.fc}%</div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {weather && (
+        <div className="f2" style={{ ...G.glass, padding: 16, borderRadius: 20, marginBottom: 10, border: "1px solid rgba(74,222,128,0.15)" }}>
+          <div style={{ fontSize: 11, color: "#2a3f55", fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, marginBottom: 10 }}>💡 На сегодня</div>
+          <div style={{ fontSize: 13, color: "#3a5470", lineHeight: 1.7 }}>
+            {biteScore >= 70 ? `Отличный день для рыбалки! ${weather.temp}°, давление ${weather.pressure}мм — идеальные условия.`
+              : biteScore >= 45 ? `Неплохие условия. ${weather.temp}°, ветер ${weather.wind}м/с. Пробуй утренние и вечерние зорьки.`
+                : `Сегодня клёв слабый. Давление ${weather.pressure}мм. Лучше подождать стабилизации погоды.`}
+          </div>
+        </div>
+      )}
+
+      <button className="btn f3" onClick={() => haptic("medium")} style={{ width: "100%", padding: 14, borderRadius: 16, border: "1.5px dashed rgba(255,255,255,0.1)", background: "transparent", color: "#3a5470", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>
+        + Запланировать выезд
+      </button>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════
+//  HELPERS
+// ══════════════════════════════════════════════════
+function Field({ label, children }) {
+  return (
+    <div>
+      <div style={{ fontSize: 11, color: "#3a5470", fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>{label}</div>
+      {children}
+    </div>
+  );
+}
+
+// ── Styles ──
+const G = {
+  glass: {
+    background: "rgba(8,18,34,0.75)",
+    border: "1px solid rgba(255,255,255,0.06)",
+    backdropFilter: "blur(20px)",
+    boxShadow: "0 4px 24px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04)",
+  },
+};
+
 const S = {
-  phone:{width:"100%",maxWidth:480,minHeight:"100vh",margin:"0 auto",background:"linear-gradient(180deg,#0a1628 0%,#0d1e35 50%,#0f2340 100%)",color:"#e2e8f0",fontFamily:"'Outfit',system-ui,sans-serif",position:"relative",overflow:"hidden"},
-  content:{overflowY:"auto",paddingBottom:70},
-  tabBar:{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:480,background:"rgba(10,22,40,.95)",backdropFilter:"blur(20px)",borderTop:"1px solid #1e3454",display:"flex",justifyContent:"space-around",padding:"6px 0 calc(10px + env(safe-area-inset-bottom))",zIndex:10},
-  tab:{display:"flex",flexDirection:"column",alignItems:"center",gap:2,border:"none",background:"none",cursor:"pointer",padding:"4px 8px",fontFamily:"'Outfit',system-ui,sans-serif"},
-  card:{background:"#111d33",border:"1px solid #1e3454",borderRadius:16,padding:16,marginBottom:10},
-  miniCard:{background:"#111d33",border:"1px solid #1e3454",borderRadius:12,padding:12,textAlign:"center"},
-  actionBtn:{padding:"18px 8px",borderRadius:16,border:"2px solid",cursor:"pointer",fontFamily:"'Outfit',system-ui,sans-serif",display:"flex",flexDirection:"column",alignItems:"center",textAlign:"center"},
+  root: {
+    width: "100%", maxWidth: 480, minHeight: "100vh", margin: "0 auto",
+    color: "#d8eaf8", fontFamily: "'Manrope',system-ui,sans-serif",
+    position: "relative", overflow: "hidden",
+  },
+  content: {
+    position: "relative", zIndex: 1, overflowY: "auto", paddingBottom: 72,
+  },
+  tabBar: {
+    position: "fixed", bottom: 0, left: "50%", transform: "translateX(-50%)",
+    width: "100%", maxWidth: 480,
+    background: "rgba(4,10,22,0.92)", backdropFilter: "blur(24px)",
+    borderTop: "1px solid rgba(255,255,255,0.05)",
+    display: "flex", justifyContent: "space-around",
+    padding: "6px 0 calc(8px + env(safe-area-inset-bottom))", zIndex: 10,
+    boxShadow: "0 -8px 32px rgba(0,0,0,0.4)",
+  },
+  tab: {
+    display: "flex", flexDirection: "column", alignItems: "center", gap: 2,
+    border: "none", background: "none", cursor: "pointer", padding: "4px 10px",
+    fontFamily: "'Manrope',system-ui,sans-serif", transition: "color .2s",
+  },
+  input: {
+    width: "100%", padding: "12px 14px", borderRadius: 12, boxSizing: "border-box",
+    background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)",
+    color: "#d8eaf8", outline: "none", fontSize: 14, fontWeight: 500,
+    backdropFilter: "blur(10px)",
+  },
 };
