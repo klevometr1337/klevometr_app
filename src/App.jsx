@@ -1036,7 +1036,7 @@ function getForecastColor(s) { return s >= 70 ? "#4ade80" : s >= 45 ? "#fbbf24" 
 //  STATS SCREEN
 // ══════════════════════════════════════════════════
 function StatsScreen({ shared }) {
-  const { catches, sessions } = shared;
+  const { catches, sessions, gearItems, spots } = shared;
   const totalWeight = catches.reduce((a, c) => a + (parseFloat(c.weight) || 0), 0).toFixed(1);
   const maxCatch = catches.reduce((a, c) => (parseFloat(c.weight) || 0) > (parseFloat(a.weight) || 0) ? c : a, {});
   const fishCounts = catches.reduce((a, c) => { a[c.fish] = (a[c.fish] || 0) + 1; return a; }, {});
