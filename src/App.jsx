@@ -2011,12 +2011,17 @@ function TournamentsScreen({ v, go }) {
 // ═══════════════════════════════════════
 //  TOURNAMENT VIEW (leaderboard + add catch)
 // ═══════════════════════════════════════
-function TournamentViewScreen({ back, tournament, v, saveCatch }) {
+function TournamentViewScreen({ back, tournament: initialTournament, v, saveCatch }) {
+  const [tournament, setTournament] = useState(initialTournament);
   const [participants, setParticipants] = useState([]);
   const [catches, setCatches] = useState([]);
   const [adding, setAdding] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [editForm, setEditForm] = useState({ name: "", rules: "", endDate: "", scoring: "count" });
   const [form, setForm] = useState({ fish: "", weight: "", length: "" });
   const tgId = tg?.initDataUnsafe?.user?.id;
+  const isCreator = tournament && tgId && tournament.creator_id === tgId;
 
   useEffect(() => {
     if (!tournament) return;
@@ -2029,7 +2034,6 @@ function TournamentViewScreen({ back, tournament, v, saveCatch }) {
       setCatches(tc || []);
     };
     load();
-    // Refresh every 15s
     const interval = setInterval(load, 15000);
     return () => clearInterval(interval);
   }, [tournament]);
@@ -2040,17 +2044,14 @@ function TournamentViewScreen({ back, tournament, v, saveCatch }) {
       tournament_id: tournament.id, user_id: tgId,
       fish: form.fish, weight: parseFloat(form.weight) || 0, length: parseFloat(form.length) || 0,
     });
-    // Update participant stats
     const myCatches = catches.filter(c => c.user_id === tgId);
     const newCaught = myCatches.length + 1;
     const newWeight = myCatches.reduce((a, c) => a + (parseFloat(c.weight) || 0), 0) + (parseFloat(form.weight) || 0);
     await supabase.update("tournament_participants", `tournament_id=eq.${tournament.id}&user_id=eq.${tgId}`, { total_caught: newCaught, total_weight: newWeight });
-    // Also save to personal diary
     saveCatch({ fish: form.fish, weight: form.weight, length: form.length, date: new Date().toLocaleDateString("ru-RU"), notes: `Турнир: ${tournament.name}` });
     hapticNotify("success");
     setForm({ fish: "", weight: "", length: "" });
     setAdding(false);
-    // Refresh
     const [parts, tc] = await Promise.all([
       supabase.select("tournament_participants", `tournament_id=eq.${tournament.id}`),
       supabase.select("tournament_catches", `tournament_id=eq.${tournament.id}&order=created_at.desc`),
@@ -2067,23 +2068,99 @@ function TournamentViewScreen({ back, tournament, v, saveCatch }) {
     else navigator.clipboard?.writeText(`${text}\n${link}`);
   };
 
+  // ── Admin: Edit ──
+  const startEdit = () => {
+    setEditForm({ name: tournament.name, rules: tournament.rules || "", endDate: tournament.end_date || "", scoring: tournament.scoring || "count" });
+    setEditing(true);
+  };
+  const saveEdit = async () => {
+    if (!editForm.name.trim()) return;
+    const result = await supabase.update("tournaments", `id=eq.${tournament.id}`, {
+      name: editForm.name, rules: editForm.rules, end_date: editForm.endDate || null, scoring: editForm.scoring,
+    });
+    if (result?.[0]) setTournament(result[0]);
+    hapticNotify("success");
+    setEditing(false);
+  };
+
+  // ── Admin: Delete ──
+  const deleteTournament = async () => {
+    await supabase.delete("tournament_catches", `tournament_id=eq.${tournament.id}`);
+    await supabase.delete("tournament_participants", `tournament_id=eq.${tournament.id}`);
+    await supabase.delete("tournaments", `id=eq.${tournament.id}`);
+    hapticNotify("warning");
+    back();
+  };
+
+  // ── Admin: End tournament ──
+  const endTournament = async () => {
+    const result = await supabase.update("tournaments", `id=eq.${tournament.id}`, { status: "ended" });
+    if (result?.[0]) setTournament(result[0]);
+    hapticNotify("success");
+  };
+
   if (!tournament) return null;
 
-  // Sort leaderboard
   const leaderboard = [...participants].sort((a, b) => {
     if (tournament.scoring === "weight") return (b.total_weight || 0) - (a.total_weight || 0);
     return (b.total_caught || 0) - (a.total_caught || 0);
   });
+  const isEnded = tournament.status === "ended";
 
   return (
     <div style={{ padding: "0 16px 16px" }}>
       <div className="f0" style={{ padding: "16px 0" }}>
-        <div style={{ fontSize: 24, fontWeight: 900 }}>🏆 {tournament.name}</div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div style={{ fontSize: 24, fontWeight: 900, flex: 1 }}>🏆 {tournament.name}</div>
+          {isEnded && <span style={{ fontSize: 11, padding: "4px 10px", borderRadius: 8, background: `${v.btnDangerColor}15`, color: v.btnDangerColor, fontWeight: 700 }}>Завершён</span>}
+        </div>
         <div style={{ fontSize: 13, color: v.textMuted, marginTop: 2 }}>{tournament.rules || "Без ограничений"}</div>
       </div>
 
+      {/* Admin panel (only for creator) */}
+      {isCreator && (
+        <GlassCard v={v} className="f1" style={{ padding: 12, borderRadius: 14, border: `1px solid ${v.stats[2]}25` }}>
+          <div style={{ fontSize: 11, color: v.stats[2], fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>⚙️ Управление турниром</div>
+          {editing ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <ThemedInput v={v} value={editForm.name} onChange={e => setEditForm(f => ({ ...f, name: e.target.value }))} placeholder="Название" />
+              <ThemedInput v={v} value={editForm.rules} onChange={e => setEditForm(f => ({ ...f, rules: e.target.value }))} placeholder="Правила" />
+              <ThemedInput v={v} type="date" value={editForm.endDate} onChange={e => setEditForm(f => ({ ...f, endDate: e.target.value }))} />
+              <div style={{ display: "flex", gap: 4 }}>
+                {[{ k: "count", l: "🐟 Кол-во" }, { k: "weight", l: "⚖️ Вес" }, { k: "length", l: "📏 Длина" }].map(s => (
+                  <button key={s.k} onClick={() => setEditForm(f => ({ ...f, scoring: s.k }))} className="btn" style={{
+                    flex: 1, padding: "6px", borderRadius: 8, fontSize: 11, fontWeight: 700,
+                    background: editForm.scoring === s.k ? `${v.accent}12` : `${v.accent}03`,
+                    border: `1px solid ${editForm.scoring === s.k ? `${v.accent}30` : v.cardBorder}`,
+                    color: editForm.scoring === s.k ? v.accent : v.textMuted, cursor: "pointer", fontFamily: "inherit",
+                  }}>{s.l}</button>
+                ))}
+              </div>
+              <div style={{ display: "flex", gap: 6 }}>
+                <button onClick={saveEdit} className="btn" style={{ flex: 1, padding: 10, borderRadius: 10, background: v.btnPrimary, color: "#fff", fontWeight: 800, border: "none", cursor: "pointer", fontFamily: "inherit", fontSize: 13 }}>💾 Сохранить</button>
+                <button onClick={() => setEditing(false)} className="btn" style={{ padding: "10px 14px", borderRadius: 10, border: `1px solid ${v.cardBorder}`, background: "transparent", color: v.textMuted, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", fontSize: 13 }}>Отмена</button>
+              </div>
+            </div>
+          ) : confirmDelete ? (
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: v.btnDangerColor, marginBottom: 8 }}>Удалить турнир и все данные? Это необратимо.</div>
+              <div style={{ display: "flex", gap: 6 }}>
+                <button onClick={deleteTournament} className="btn" style={{ flex: 1, padding: 10, borderRadius: 10, background: v.btnDanger, border: `1px solid ${v.btnDangerBorder}`, color: v.btnDangerColor, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", fontSize: 13 }}>🗑 Да, удалить</button>
+                <button onClick={() => setConfirmDelete(false)} className="btn" style={{ flex: 1, padding: 10, borderRadius: 10, border: `1px solid ${v.cardBorder}`, background: "transparent", color: v.textMuted, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", fontSize: 13 }}>Отмена</button>
+              </div>
+            </div>
+          ) : (
+            <div style={{ display: "flex", gap: 6 }}>
+              <button onClick={startEdit} className="btn" style={{ flex: 1, padding: "8px 12px", borderRadius: 10, background: `${v.accent}08`, border: `1px solid ${v.accent}20`, color: v.accent, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", fontSize: 12 }}>✏️ Изменить</button>
+              {!isEnded && <button onClick={endTournament} className="btn" style={{ flex: 1, padding: "8px 12px", borderRadius: 10, background: `${v.stats[2]}08`, border: `1px solid ${v.stats[2]}20`, color: v.stats[2], fontWeight: 700, cursor: "pointer", fontFamily: "inherit", fontSize: 12 }}>🏁 Завершить</button>}
+              <button onClick={() => setConfirmDelete(true)} className="btn" style={{ padding: "8px 12px", borderRadius: 10, background: v.btnDanger, border: `1px solid ${v.btnDangerBorder}`, color: v.btnDangerColor, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", fontSize: 12 }}>🗑</button>
+            </div>
+          )}
+        </GlassCard>
+      )}
+
       {/* Invite code banner */}
-      <GlassCard v={v} className="f1" style={{ padding: 14, borderRadius: 16, border: `1px solid ${v.accentBorder}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+      <GlassCard v={v} className={isCreator ? "f2" : "f1"} style={{ padding: 14, borderRadius: 16, border: `1px solid ${v.accentBorder}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <div>
           <div style={{ fontSize: 11, color: v.textDim, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1 }}>Код приглашения</div>
           <div style={{ fontSize: 24, fontWeight: 900, color: v.accent, letterSpacing: 4, marginTop: 4 }}>{tournament.invite_code}</div>
@@ -2091,9 +2168,9 @@ function TournamentViewScreen({ back, tournament, v, saveCatch }) {
         <button onClick={shareTournament} className="btn" style={{ padding: "10px 16px", borderRadius: 12, background: v.btnPrimary, color: "#fff", fontWeight: 800, border: "none", cursor: "pointer", fontFamily: "inherit", fontSize: 13 }}>📤 Поделиться</button>
       </GlassCard>
 
-      {/* Add catch */}
-      {adding ? (
-        <GlassCard v={v} className="f2" style={{ padding: 16, borderRadius: 16 }}>
+      {/* Add catch (only if tournament active) */}
+      {!isEnded && (adding ? (
+        <GlassCard v={v} style={{ padding: 16, borderRadius: 16 }}>
           <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 10 }}>Добавить улов в турнир</div>
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             <ThemedSelect v={v} value={form.fish} onChange={e => setForm(f => ({ ...f, fish: e.target.value }))}><option value="">Рыба</option>{FISH_LIST.map(f => <option key={f} value={f}>{f}</option>)}</ThemedSelect>
@@ -2108,11 +2185,11 @@ function TournamentViewScreen({ back, tournament, v, saveCatch }) {
           </div>
         </GlassCard>
       ) : (
-        <button onClick={() => setAdding(true)} className="btn f2" style={{ width: "100%", padding: 14, borderRadius: 16, background: `${v.accent}08`, border: `1.5px solid ${v.accent}25`, color: v.accent, fontWeight: 800, fontSize: 15, cursor: "pointer", fontFamily: "inherit", marginBottom: 10 }}>🐟 Записать улов</button>
-      )}
+        <button onClick={() => setAdding(true)} className="btn" style={{ width: "100%", padding: 14, borderRadius: 16, background: `${v.accent}08`, border: `1.5px solid ${v.accent}25`, color: v.accent, fontWeight: 800, fontSize: 15, cursor: "pointer", fontFamily: "inherit", marginBottom: 10 }}>🐟 Записать улов</button>
+      ))}
 
       {/* Leaderboard */}
-      <GlassCard v={v} className="f3" style={{ padding: 16, borderRadius: 16 }}>
+      <GlassCard v={v} style={{ padding: 16, borderRadius: 16 }}>
         <div style={{ fontSize: 11, color: v.textDim, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, marginBottom: 12 }}>🏅 Лидерборд · {participants.length} участников</div>
         {leaderboard.length === 0 ? (
           <div style={{ textAlign: "center", padding: "20px 0", color: v.textDim, fontSize: 13 }}>Пока нет участников</div>
@@ -2121,7 +2198,7 @@ function TournamentViewScreen({ back, tournament, v, saveCatch }) {
           const medal = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `${i + 1}`;
           const val = tournament.scoring === "weight" ? `${(p.total_weight || 0).toFixed(1)} кг` : `${p.total_caught || 0} шт`;
           return (
-            <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 0", borderBottom: i < leaderboard.length - 1 ? `1px solid ${v.cardBorder}` : "none", background: isMe ? `${v.accent}08` : "transparent", margin: isMe ? "0 -8px" : 0, padding: isMe ? "10px 8px" : "10px 0", borderRadius: isMe ? 10 : 0 }}>
+            <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: isMe ? "10px 8px" : "10px 0", borderBottom: i < leaderboard.length - 1 ? `1px solid ${v.cardBorder}` : "none", background: isMe ? `${v.accent}08` : "transparent", margin: isMe ? "0 -8px" : 0, borderRadius: isMe ? 10 : 0 }}>
               <span style={{ fontSize: i < 3 ? 20 : 14, width: 28, textAlign: "center", fontWeight: 900, color: v.textMuted }}>{medal}</span>
               <div style={{ flex: 1 }}>
                 <div style={{ fontWeight: isMe ? 800 : 600, fontSize: 14, color: isMe ? v.accent : v.text }}>{p.first_name || p.username || "—"}{isMe ? " (ты)" : ""}</div>
@@ -2135,7 +2212,7 @@ function TournamentViewScreen({ back, tournament, v, saveCatch }) {
 
       {/* Recent catches */}
       {catches.length > 0 && (
-        <GlassCard v={v} className="f4" style={{ padding: 16, borderRadius: 16 }}>
+        <GlassCard v={v} style={{ padding: 16, borderRadius: 16 }}>
           <div style={{ fontSize: 11, color: v.textDim, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, marginBottom: 10 }}>Последние уловы</div>
           {catches.slice(0, 10).map((c, i) => (
             <div key={c.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0", borderBottom: i < Math.min(catches.length, 10) - 1 ? `1px solid ${v.cardBorder}` : "none" }}>
@@ -2365,6 +2442,7 @@ function PlanScreen({ wd, v }) {
   const [plans, setPlans] = useState(() => storage.get("plans", []));
   const [adding, setAdding] = useState(false);
   const [form, setForm] = useState({ date: "", location: "", notes: "" });
+  const friends = storage.get("friends", []);
 
   const addPlan = () => {
     if (!form.date) return;
@@ -2373,6 +2451,29 @@ function PlanScreen({ wd, v }) {
     setPlans(updated); storage.set("plans", updated); setAdding(false); setForm({ date: "", location: "", notes: "" }); hapticNotify("success");
   };
   const deletePlan = (id) => { haptic("medium"); const updated = plans.filter(p => p.id !== id); setPlans(updated); storage.set("plans", updated); };
+
+  const inviteToPlan = (plan) => {
+    haptic("medium");
+    const dateStr = new Date(plan.date).toLocaleDateString("ru-RU", { weekday: "long", day: "numeric", month: "long" });
+    const text = `🎣 Приглашаю на рыбалку!\n\n📅 ${dateStr}${plan.location ? `\n📍 ${plan.location}` : ""}${plan.notes ? `\n📝 ${plan.notes}` : ""}\n\nПрисоединяйся в Клёвометре!`;
+    const link = APP_LINK;
+    if (tg) {
+      tg.openTelegramLink(`https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(text)}`);
+    } else {
+      navigator.clipboard?.writeText(`${text}\n${link}`);
+    }
+  };
+
+  const inviteFriendDirectly = (plan, friend) => {
+    haptic("medium");
+    const dateStr = new Date(plan.date).toLocaleDateString("ru-RU", { weekday: "long", day: "numeric", month: "long" });
+    const text = `🎣 Привет! Приглашаю на рыбалку ${dateStr}${plan.location ? ` на ${plan.location}` : ""}! Присоединяйся!`;
+    if (tg) {
+      tg.openTelegramLink(`https://t.me/${friend.username}`);
+    } else {
+      navigator.clipboard?.writeText(text);
+    }
+  };
 
   return (
     <div style={{ padding: "0 16px 16px" }}>
@@ -2405,18 +2506,75 @@ function PlanScreen({ wd, v }) {
       )}
 
       {plans.map((p, i) => (
-        <div key={p.id} style={{ ...v.glass, padding: 14, borderRadius: 16, marginBottom: 8, display: "flex", justifyContent: "space-between", alignItems: "center", animation: `fadeUp .4s ease ${i * 0.05}s both` }}>
-          <div>
-            <div style={{ fontWeight: 700, fontSize: 14 }}>📅 {new Date(p.date).toLocaleDateString("ru-RU", { weekday: "short", day: "numeric", month: "short" })}</div>
-            {p.location && <div style={{ fontSize: 12, color: v.textMuted, marginTop: 2 }}>📍 {p.location}</div>}
-            {p.notes && <div style={{ fontSize: 11, color: v.textDim, marginTop: 2 }}>{p.notes}</div>}
-          </div>
-          <button onClick={() => deletePlan(p.id)} className="btn" style={{ background: "none", border: "none", color: v.btnDangerColor, cursor: "pointer", fontSize: 16, padding: 4 }}>✕</button>
-        </div>
+        <PlanCard key={p.id} plan={p} index={i} v={v} friends={friends} onDelete={deletePlan} onInvite={inviteToPlan} onInviteFriend={inviteFriendDirectly} />
       ))}
 
       {plans.length === 0 && !adding && (
         <div style={{ textAlign: "center", padding: "40px 20px", color: v.textDim }}><div style={{ fontSize: 48, marginBottom: 12 }}>📅</div><div style={{ fontSize: 14, lineHeight: 1.6 }}>Запланируй следующую рыбалку</div></div>
+      )}
+    </div>
+  );
+}
+
+// ── Plan card with invite functionality ──
+function PlanCard({ plan, index, v, friends, onDelete, onInvite, onInviteFriend }) {
+  const [showInvite, setShowInvite] = useState(false);
+  const dateStr = new Date(plan.date).toLocaleDateString("ru-RU", { weekday: "short", day: "numeric", month: "short" });
+  const isPast = new Date(plan.date) < new Date(new Date().toDateString());
+
+  return (
+    <div style={{ ...v.glass, borderRadius: 16, marginBottom: 8, overflow: "hidden", animation: `fadeUp .4s ease ${index * 0.05}s both`, opacity: isPast ? 0.5 : 1 }}>
+      <div style={{ padding: 14, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontWeight: 700, fontSize: 14 }}>📅 {dateStr}</div>
+          {plan.location && <div style={{ fontSize: 12, color: v.textMuted, marginTop: 2 }}>📍 {plan.location}</div>}
+          {plan.notes && <div style={{ fontSize: 11, color: v.textDim, marginTop: 2 }}>{plan.notes}</div>}
+        </div>
+        <div style={{ display: "flex", gap: 4 }}>
+          {!isPast && (
+            <button onClick={() => { setShowInvite(!showInvite); haptic("light"); }} className="btn" style={{ padding: "6px 10px", borderRadius: 10, background: `${v.accent}08`, border: `1px solid ${v.accent}20`, color: v.accent, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>👥</button>
+          )}
+          <button onClick={() => onDelete(plan.id)} className="btn" style={{ background: "none", border: "none", color: v.btnDangerColor, cursor: "pointer", fontSize: 16, padding: "6px 4px" }}>✕</button>
+        </div>
+      </div>
+
+      {/* Invite panel */}
+      {showInvite && (
+        <div style={{ padding: "0 14px 14px", borderTop: `1px solid ${v.cardBorder}` }}>
+          <div style={{ fontSize: 11, color: v.textDim, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, marginTop: 10, marginBottom: 8 }}>Пригласить на рыбалку</div>
+
+          {/* Share button (general) */}
+          <button onClick={() => onInvite(plan)} className="btn" style={{
+            width: "100%", padding: "10px 14px", borderRadius: 12, marginBottom: 8,
+            background: v.btnPrimary, color: "#fff", fontWeight: 700, fontSize: 13,
+            border: "none", cursor: "pointer", fontFamily: "inherit",
+            display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+          }}>📤 Отправить приглашение в Telegram</button>
+
+          {/* Friends quick invite */}
+          {friends.length > 0 && (
+            <>
+              <div style={{ fontSize: 11, color: v.textDim, marginBottom: 6 }}>Или напиши другу напрямую:</div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {friends.map(f => (
+                  <button key={f.username} onClick={() => onInviteFriend(plan, f)} className="btn" style={{
+                    padding: "6px 12px", borderRadius: 10,
+                    background: `${v.accent}08`, border: `1px solid ${v.accent}15`,
+                    color: v.accent, fontSize: 12, fontWeight: 700,
+                    cursor: "pointer", fontFamily: "inherit",
+                    display: "flex", alignItems: "center", gap: 4,
+                  }}>
+                    <span style={{ fontSize: 14 }}>👤</span> @{f.username}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+
+          {friends.length === 0 && (
+            <div style={{ fontSize: 12, color: v.textDim, textAlign: "center", padding: "4px 0" }}>Добавь друзей в профиле для быстрого приглашения</div>
+          )}
+        </div>
       )}
     </div>
   );
