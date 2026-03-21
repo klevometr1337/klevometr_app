@@ -8,6 +8,9 @@ import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 const OWM_API_KEY = "ae9e552e204ffd1a5534b385a0af66f8";
 const SUPABASE_URL = "https://dzdivehecxxaolfohdhg.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImR6ZGl2ZWhlY3h4YW9sZm9oZGhnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQwMjY0OTEsImV4cCI6MjA4OTYwMjQ5MX0.PwJofXpZb2BUHoqtOwmHLfAPJkuaGNB2yncyaPF1HKE";
+const BOT_USERNAME = "klevometr_bot"; // @klevometr_bot
+const MINI_APP_SHORT = "klevometr"; // короткое имя Mini App из BotFather (/newapp)
+const APP_LINK = `https://t.me/${BOT_USERNAME}/${MINI_APP_SHORT}`;
 
 const tg = window.Telegram?.WebApp;
 const haptic = (type = "light") => { try { tg?.HapticFeedback?.impactOccurred(type); } catch (e) {} };
@@ -301,7 +304,7 @@ const DAY = {
 // ── Theme context hook ──
 function useTheme() {
   const [isNight, setIsNight] = useState(() => {
-    try { return localStorage.getItem("klevometr_theme") !== "day"; } catch { return true; }
+    try { return localStorage.getItem("klevometr_theme") === "night"; } catch { return false; }
   });
   const toggle = useCallback(() => {
     setIsNight(p => {
@@ -1182,7 +1185,7 @@ function ViewCatchScreen({ back, catchItem, deleteCatch, v }) {
         <button onClick={() => {
           haptic("medium");
           const text = `🐟 ${catchItem.fish}${catchItem.weight ? ` ${catchItem.weight}кг` : ""}${catchItem.location ? `\n📍 ${catchItem.location}` : ""}\n\n🎣 Клёвометр`;
-          if (tg) tg.openTelegramLink(`https://t.me/share/url?url=${encodeURIComponent("https://t.me/KlevometrBot/app")}&text=${encodeURIComponent(text)}`);
+          if (tg) tg.openTelegramLink(`https://t.me/share/url?url=${encodeURIComponent(APP_LINK)}&text=${encodeURIComponent(text)}`);
           else navigator.clipboard?.writeText(text);
         }} className="btn" style={{ flex: 1, padding: 14, borderRadius: 16, border: `1.5px solid ${v.accent}30`, background: `${v.accent}08`, color: v.accent, fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>📤 Поделиться</button>
         <button onClick={handleDelete} className="btn" style={{ flex: 1, padding: 14, borderRadius: 16, border: `1.5px solid ${v.btnDangerBorder}`, background: v.btnDanger, color: v.btnDangerColor, fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>🗑 Удалить</button>
@@ -1904,7 +1907,7 @@ function TournamentsScreen({ v, go }) {
 
   const shareTournament = (t) => {
     haptic("medium");
-    const link = `https://t.me/KlevometrBot/app?startapp=t_${t.invite_code}`;
+    const link = `${APP_LINK}?startapp=t_${t.invite_code}`;
     const text = `🏆 Присоединяйся к турниру "${t.name}" в Клёвометре!\n\nКод: ${t.invite_code}\n`;
     if (tg) {
       tg.openTelegramLink(`https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(text)}`);
@@ -2058,7 +2061,7 @@ function TournamentViewScreen({ back, tournament, v, saveCatch }) {
 
   const shareTournament = () => {
     haptic("medium");
-    const link = `https://t.me/KlevometrBot/app?startapp=t_${tournament.invite_code}`;
+    const link = `${APP_LINK}?startapp=t_${tournament.invite_code}`;
     const text = `🏆 Присоединяйся к турниру "${tournament.name}" в Клёвометре!\nКод: ${tournament.invite_code}`;
     if (tg) tg.openTelegramLink(`https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(text)}`);
     else navigator.clipboard?.writeText(`${text}\n${link}`);
