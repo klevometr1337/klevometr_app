@@ -67,13 +67,13 @@ function useSupabaseUser() {
         const existing = await supabase.select("users", `telegram_id=eq.${tgUser.id}`);
         if (existing && existing.length > 0) {
           setUser(existing[0]);
-          // Update last seen
           supabase.update("users", `telegram_id=eq.${tgUser.id}`, { last_seen: new Date().toISOString(), username: tgUser.username || "", first_name: tgUser.first_name || "" });
         } else {
           const newUser = await supabase.insert("users", {
             telegram_id: tgUser.id,
             username: tgUser.username || "",
             first_name: tgUser.first_name || "",
+            avatar_emoji: "🎣",
             last_seen: new Date().toISOString(),
           });
           if (newUser?.[0]) setUser(newUser[0]);
@@ -82,8 +82,56 @@ function useSupabaseUser() {
     };
     syncUser();
   }, []);
-  return user;
+
+  const updateProfile = useCallback(async (fields) => {
+    const tgUser = tg?.initDataUnsafe?.user;
+    if (!tgUser) return;
+    const result = await supabase.update("users", `telegram_id=eq.${tgUser.id}`, fields);
+    if (result?.[0]) setUser(result[0]);
+    // Also persist locally
+    if (fields.nickname) storage.set("profile_nickname", fields.nickname);
+    if (fields.avatar_emoji) storage.set("profile_avatar", fields.avatar_emoji);
+    if (fields.custom_lat != null) {
+      storage.set("manualLocation", { lat: fields.custom_lat, lon: fields.custom_lng, city: fields.custom_city || "" });
+    }
+  }, []);
+
+  const clearCustomLocation = useCallback(async () => {
+    const tgUser = tg?.initDataUnsafe?.user;
+    if (!tgUser) return;
+    await supabase.update("users", `telegram_id=eq.${tgUser.id}`, { custom_lat: null, custom_lng: null, custom_city: null });
+    storage.set("manualLocation", null);
+    setUser(prev => prev ? { ...prev, custom_lat: null, custom_lng: null, custom_city: null } : prev);
+  }, []);
+
+  return { user, setUser, updateProfile, clearCustomLocation };
 }
+
+// ── Generate short invite code ──
+function generateInviteCode() {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let code = "";
+  for (let i = 0; i < 6; i++) code += chars[Math.floor(Math.random() * chars.length)];
+  return code;
+}
+
+// ── Cities for manual geo picker ──
+const POPULAR_CITIES = [
+  { name: "Москва", lat: 55.7558, lon: 37.6173 },
+  { name: "Санкт-Петербург", lat: 59.9343, lon: 30.3351 },
+  { name: "Казань", lat: 55.7887, lon: 49.1221 },
+  { name: "Новосибирск", lat: 55.0084, lon: 82.9357 },
+  { name: "Екатеринбург", lat: 56.8389, lon: 60.6057 },
+  { name: "Нижний Новгород", lat: 56.2965, lon: 43.9361 },
+  { name: "Самара", lat: 53.1959, lon: 50.1002 },
+  { name: "Ростов-на-Дону", lat: 47.2357, lon: 39.7015 },
+  { name: "Красноярск", lat: 56.0153, lon: 92.8932 },
+  { name: "Воронеж", lat: 51.6720, lon: 39.1843 },
+  { name: "Краснодар", lat: 45.0355, lon: 38.9753 },
+  { name: "Тверь", lat: 56.8587, lon: 35.9176 },
+  { name: "Астрахань", lat: 46.3497, lon: 48.0408 },
+  { name: "Волгоград", lat: 48.7080, lon: 44.5133 },
+];
 
 // ── Dual sync hook (localStorage + Supabase) ──
 function useSync(key, defaultVal, tableName = null) {
@@ -398,6 +446,8 @@ const SCREENS = {
   social: "social", spots: "spots", addSpot: "addSpot",
   profile: "profile", tournaments: "tournaments", plan: "plan",
   map: "map", friends: "friends",
+  editProfile: "editProfile", locationPicker: "locationPicker",
+  tournamentView: "tournamentView", tournamentJoin: "tournamentJoin",
 };
 const FISH_LIST = ["Щука","Окунь","Судак","Карп","Карась","Лещ","Сом","Плотва","Жерех","Форель","Налим","Язь","Голавль","Красноперка","Густера"];
 const BAITS_LIST = ["Воблер","Блесна вращ.","Блесна колебл.","Джиг","Твистер","Виброхвост","Червь","Опарыш","Мотыль","Кукуруза","Живец","Бойл","Пенопласт","Тесто","Хлеб"];
@@ -504,7 +554,7 @@ function DayBg() {
 // ═══════════════════════════════════════
 export default function Klevometr() {
   const { isNight, toggle: toggleTheme, v } = useTheme();
-  const sbUser = useSupabaseUser();
+  const { user: sbUser, updateProfile, clearCustomLocation } = useSupabaseUser();
 
   const [screen, setScreen] = useState(SCREENS.home);
   const [history, setHistory] = useState([]);
@@ -607,7 +657,8 @@ export default function Klevometr() {
   const fmt = (s) => `${String(Math.floor(s / 3600)).padStart(2, "0")}:${String(Math.floor((s % 3600) / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
   const bph = elapsed > 0 ? (bites / (elapsed / 3600)).toFixed(1) : "0.0";
   const realiz = bites > 0 ? Math.round((caught / bites) * 100) : 0;
-  const userName = tg?.initDataUnsafe?.user?.first_name || "рыбак";
+  const userName = sbUser?.nickname || tg?.initDataUnsafe?.user?.first_name || "рыбак";
+  const userAvatar = sbUser?.avatar_emoji || storage.get("profile_avatar", "🎣");
 
   const saveCatch = (cd) => setCatches(prev => [{ id: Date.now(), ...cd }, ...prev]);
   const deleteCatch = (id) => setCatches(prev => prev.filter(c => c.id !== id));
@@ -618,6 +669,16 @@ export default function Klevometr() {
 
   const wd = { weather, forecast, moon, biteScore, weatherLoading, locationName, currentHour, setManualLocation };
   const shared = { catches, gearItems, spots, sessions, saveCatch, deleteCatch, saveGear, deleteGear, saveSpot, deleteSpot };
+  const profileProps = { sbUser, updateProfile, clearCustomLocation, userAvatar };
+
+  // Check URL for tournament invite
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const inviteCode = params.get("invite") || tg?.initDataUnsafe?.start_param;
+    if (inviteCode && inviteCode.startsWith("t_")) {
+      go(SCREENS.tournamentJoin, { invite_code: inviteCode.replace("t_", "") });
+    }
+  }, []);
 
   return (
     <div style={{ width: "100%", maxWidth: 480, minHeight: "100vh", margin: "0 auto", color: v.text, fontFamily: "'DM Sans',system-ui,sans-serif", position: "relative", overflow: "hidden", transition: "color .4s" }}>
@@ -669,14 +730,18 @@ export default function Klevometr() {
         {screen === SCREENS.social && <SocialScreen v={v} />}
         {screen === SCREENS.spots && <SpotsScreen go={go} shared={shared} v={v} />}
         {screen === SCREENS.addSpot && <AddSpotScreen back={back} saveSpot={saveSpot} locationName={locationName} v={v} />}
-        {screen === SCREENS.profile && <ProfileScreen shared={shared} userName={userName} go={go} v={v} toggleTheme={toggleTheme} isNight={isNight} />}
-        {screen === SCREENS.tournaments && <TournamentsScreen v={v} />}
+        {screen === SCREENS.profile && <ProfileScreen shared={shared} userName={userName} go={go} v={v} toggleTheme={toggleTheme} isNight={isNight} {...profileProps} />}
+        {screen === SCREENS.tournaments && <TournamentsScreen v={v} go={go} />}
+        {screen === SCREENS.tournamentView && <TournamentViewScreen back={back} tournament={screenData} v={v} saveCatch={saveCatch} />}
+        {screen === SCREENS.tournamentJoin && <TournamentJoinScreen back={back} inviteData={screenData} v={v} go={go} />}
         {screen === SCREENS.plan && <PlanScreen wd={wd} v={v} />}
         {screen === SCREENS.map && <MapScreen shared={shared} go={go} v={v} />}
         {screen === SCREENS.friends && <FriendsScreen back={back} v={v} />}
+        {screen === SCREENS.editProfile && <EditProfileScreen back={back} v={v} {...profileProps} />}
+        {screen === SCREENS.locationPicker && <LocationPickerScreen back={back} v={v} updateProfile={updateProfile} clearCustomLocation={clearCustomLocation} setManualLocation={setManualLocation} sbUser={sbUser} />}
       </div>
 
-      {screen !== SCREENS.sessionActive && screen !== SCREENS.map && (
+      {screen !== SCREENS.sessionActive && screen !== SCREENS.map && screen !== SCREENS.tournamentView && (
         <div style={{
           position: "fixed", bottom: 0, left: "50%", transform: "translateX(-50%)",
           width: "100%", maxWidth: 480,
@@ -1450,12 +1515,14 @@ function SocialScreen({ v }) {
 // ═══════════════════════════════════════
 //  PROFILE
 // ═══════════════════════════════════════
-function ProfileScreen({ shared, userName, go, v, toggleTheme, isNight }) {
+function ProfileScreen({ shared, userName, go, v, toggleTheme, isNight, sbUser, updateProfile, userAvatar }) {
   const { catches = [], sessions = [], gearItems = [], spots = [] } = shared || {};
   const totalWeight = catches.reduce((a, c) => a + (parseFloat(c.weight) || 0), 0).toFixed(1);
   const maxCatch = catches.reduce((a, c) => (parseFloat(c.weight) || 0) > (parseFloat(a.weight) || 0) ? c : a, { weight: 0 });
-  const un = tg?.initDataUnsafe?.user?.first_name || userName || "FisherPro";
+  const un = sbUser?.nickname || tg?.initDataUnsafe?.user?.first_name || userName || "FisherPro";
   const uh = tg?.initDataUnsafe?.user?.username || "fisherpro";
+  const avatar = userAvatar || "🎣";
+  const customCity = sbUser?.custom_city;
 
   const [privacy, setPrivacy] = useState(() => storage.get("privacy", "public"));
   const [friends, setFriends] = useState(() => storage.get("friends", []));
@@ -1479,13 +1546,26 @@ function ProfileScreen({ shared, userName, go, v, toggleTheme, isNight }) {
   return (
     <div style={{ padding: "0 16px 16px" }}>
       <div className="f0" style={{ textAlign: "center", padding: "20px 0 16px" }}>
-        <div style={{ width: 80, height: 80, borderRadius: "50%", background: v.accentGrad, margin: "0 auto 12px", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 36, border: `3px solid ${v.accentBorder}`, boxShadow: `0 0 30px ${v.accent}20` }}>🎣</div>
+        <div style={{ width: 80, height: 80, borderRadius: "50%", background: v.accentGrad, margin: "0 auto 12px", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 36, border: `3px solid ${v.accentBorder}`, boxShadow: `0 0 30px ${v.accent}20` }}>{avatar}</div>
         <div style={{ fontSize: 22, fontWeight: 900 }}>{un}</div>
         <div style={{ fontSize: 13, color: v.textMuted, marginTop: 3 }}>@{uh}</div>
+        {customCity && <div style={{ fontSize: 12, color: v.accent, marginTop: 4 }}>📍 {customCity}</div>}
         <div style={{ marginTop: 8, display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 14px", borderRadius: 20, background: `${privacyModes.find(m => m.key === privacy).color}15`, border: `1px solid ${privacyModes.find(m => m.key === privacy).color}30` }}>
           <span style={{ fontSize: 14 }}>{privacyModes.find(m => m.key === privacy).icon}</span>
           <span style={{ fontSize: 12, fontWeight: 700, color: privacyModes.find(m => m.key === privacy).color }}>{privacyModes.find(m => m.key === privacy).label}</span>
         </div>
+      </div>
+
+      {/* Edit profile + Location buttons */}
+      <div className="f1" style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+        <button onClick={() => go(SCREENS.editProfile)} className="btn" style={{ ...v.glass, flex: 1, padding: 14, borderRadius: 16, cursor: "pointer", display: "flex", alignItems: "center", gap: 10, textAlign: "left", boxSizing: "border-box" }}>
+          <span style={{ fontSize: 20 }}>✏️</span>
+          <div><div style={{ fontWeight: 700, fontSize: 14, color: v.text }}>Профиль</div><div style={{ fontSize: 11, color: v.textMuted, marginTop: 1 }}>Аватар и имя</div></div>
+        </button>
+        <button onClick={() => go(SCREENS.locationPicker)} className="btn" style={{ ...v.glass, flex: 1, padding: 14, borderRadius: 16, cursor: "pointer", display: "flex", alignItems: "center", gap: 10, textAlign: "left", boxSizing: "border-box" }}>
+          <span style={{ fontSize: 20 }}>📍</span>
+          <div><div style={{ fontWeight: 700, fontSize: 14, color: v.text }}>Геолокация</div><div style={{ fontSize: 11, color: v.textMuted, marginTop: 1 }}>{customCity || "Авто"}</div></div>
+        </button>
       </div>
 
       {/* Theme toggle */}
@@ -1746,45 +1826,143 @@ function MapScreen({ shared, go, v }) {
 // ═══════════════════════════════════════
 //  TOURNAMENTS
 // ═══════════════════════════════════════
-function TournamentsScreen({ v }) {
-  const [tournaments, setTournaments] = useState(() => storage.get("tournaments", []));
+// ═══════════════════════════════════════
+//  TOURNAMENTS (MULTIPLAYER via Supabase)
+// ═══════════════════════════════════════
+function TournamentsScreen({ v, go }) {
+  const [tournaments, setTournaments] = useState([]);
+  const [myTournaments, setMyTournaments] = useState([]);
   const [creating, setCreating] = useState(false);
-  const [form, setForm] = useState({ name: "", type: "Приватный", rules: "", endDate: "" });
+  const [loading, setLoading] = useState(true);
+  const [joinCode, setJoinCode] = useState("");
+  const [form, setForm] = useState({ name: "", type: "private", rules: "", endDate: "", scoring: "count" });
+  const tgId = tg?.initDataUnsafe?.user?.id;
+  const tgName = tg?.initDataUnsafe?.user?.first_name || "Игрок";
+  const tgUsername = tg?.initDataUnsafe?.user?.username || "";
 
-  const createTournament = () => {
-    if (!form.name.trim()) return;
-    const t = { id: Date.now(), name: form.name, type: form.type, rules: form.rules, endDate: form.endDate || "—", participants: [tg?.initDataUnsafe?.user?.username || "я"], catches: [], createdAt: new Date().toLocaleDateString("ru-RU"), status: "active" };
-    const updated = [t, ...tournaments]; setTournaments(updated); storage.set("tournaments", updated);
-    setCreating(false); setForm({ name: "", type: "Приватный", rules: "", endDate: "" }); hapticNotify("success");
+  const loadTournaments = useCallback(async () => {
+    if (!tgId) { setLoading(false); return; }
+    try {
+      // Get tournaments I'm participating in
+      const parts = await supabase.select("tournament_participants", `user_id=eq.${tgId}&select=tournament_id`);
+      const tIds = (parts || []).map(p => p.tournament_id);
+      if (tIds.length > 0) {
+        const ts = await supabase.select("tournaments", `id=in.(${tIds.join(",")})`);
+        setMyTournaments(ts || []);
+      }
+      // Get public tournaments
+      const pub = await supabase.select("tournaments", `type=eq.public&status=eq.active&order=created_at.desc&limit=10`);
+      setTournaments(pub || []);
+    } catch (e) { console.warn(e); }
+    setLoading(false);
+  }, [tgId]);
+
+  useEffect(() => { loadTournaments(); }, [loadTournaments]);
+
+  const createTournament = async () => {
+    if (!form.name.trim() || !tgId) return;
+    const invite_code = generateInviteCode();
+    const result = await supabase.insert("tournaments", {
+      creator_id: tgId, name: form.name, type: form.type,
+      rules: form.rules, end_date: form.endDate || null,
+      scoring: form.scoring, invite_code, status: "active",
+    });
+    if (result?.[0]) {
+      // Add self as participant
+      await supabase.insert("tournament_participants", {
+        tournament_id: result[0].id, user_id: tgId,
+        username: tgUsername, first_name: tgName,
+      });
+      hapticNotify("success");
+      setCreating(false);
+      setForm({ name: "", type: "private", rules: "", endDate: "", scoring: "count" });
+      loadTournaments();
+    }
   };
-  const deleteTournament = (id) => { haptic("medium"); const updated = tournaments.filter(t => t.id !== id); setTournaments(updated); storage.set("tournaments", updated); };
+
+  const joinByCode = async () => {
+    const code = joinCode.trim().toUpperCase();
+    if (!code || !tgId) return;
+    const ts = await supabase.select("tournaments", `invite_code=eq.${code}`);
+    if (ts && ts.length > 0) {
+      const t = ts[0];
+      // Check if already joined
+      const existing = await supabase.select("tournament_participants", `tournament_id=eq.${t.id}&user_id=eq.${tgId}`);
+      if (!existing || existing.length === 0) {
+        await supabase.insert("tournament_participants", {
+          tournament_id: t.id, user_id: tgId,
+          username: tgUsername, first_name: tgName,
+        });
+      }
+      hapticNotify("success");
+      setJoinCode("");
+      go(SCREENS.tournamentView, t);
+    } else {
+      hapticNotify("error");
+    }
+  };
+
+  const shareTournament = (t) => {
+    haptic("medium");
+    const link = `https://t.me/KlevometrBot/app?startapp=t_${t.invite_code}`;
+    const text = `🏆 Присоединяйся к турниру "${t.name}" в Клёвометре!\n\nКод: ${t.invite_code}\n`;
+    if (tg) {
+      tg.openTelegramLink(`https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(text)}`);
+    } else {
+      navigator.clipboard?.writeText(`${text}\n${link}`);
+    }
+  };
+
+  const allTournaments = [...myTournaments, ...tournaments.filter(t => !myTournaments.some(m => m.id === t.id))];
 
   return (
     <div style={{ padding: "0 16px 16px" }}>
-      <div className="f0" style={{ padding: "16px 0" }}><div style={{ fontSize: 24, fontWeight: 900 }}>Турниры</div><div style={{ fontSize: 13, color: v.textMuted, marginTop: 2 }}>{tournaments.length > 0 ? `${tournaments.length} турниров` : "Создай первый"}</div></div>
-      <GlassCard v={v} className="f1" style={{ padding: 12, borderRadius: 12, marginBottom: 12, borderColor: `${v.accent}20` }}>
-        <div style={{ fontSize: 12, color: v.accent, fontWeight: 600 }}>ℹ️ Турниры пока работают локально. Мультиплеер — скоро</div>
+      <div className="f0" style={{ padding: "16px 0" }}>
+        <div style={{ fontSize: 24, fontWeight: 900 }}>Турниры</div>
+        <div style={{ fontSize: 13, color: v.textMuted, marginTop: 2 }}>Мультиплеер · Supabase</div>
+      </div>
+
+      {/* Join by code */}
+      <GlassCard v={v} className="f1" style={{ padding: 14, borderRadius: 16 }}>
+        <div style={{ fontSize: 11, color: v.textDim, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>Присоединиться по коду</div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <ThemedInput v={v} value={joinCode} onChange={e => setJoinCode(e.target.value.toUpperCase())} placeholder="ABC123" onKeyDown={e => e.key === "Enter" && joinByCode()} style={{ flex: 1, textTransform: "uppercase", letterSpacing: 2, fontWeight: 800, textAlign: "center" }} maxLength={6} />
+          <button onClick={joinByCode} className="btn" style={{ padding: "10px 18px", borderRadius: 12, background: v.btnPrimary, color: "#fff", fontWeight: 800, border: "none", cursor: "pointer", fontFamily: "inherit", fontSize: 14 }}>Войти</button>
+        </div>
       </GlassCard>
 
       {creating ? (
-        <GlassCard v={v} className="f1" style={{ padding: 16, borderRadius: 20, marginBottom: 12 }}>
+        <GlassCard v={v} className="f2" style={{ padding: 16, borderRadius: 20 }}>
           <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 14 }}>Новый турнир</div>
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
             <Field label="Название" v={v}><ThemedInput v={v} value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="Щучий турнир" /></Field>
             <div>
               <div style={{ fontSize: 11, color: v.textDim, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>Тип</div>
               <div style={{ display: "flex", gap: 6 }}>
-                {["Приватный", "Публичный"].map(t => (
-                  <button key={t} onClick={() => setForm(f => ({ ...f, type: t }))} className="btn" style={{
+                {[{ k: "private", l: "🔒 Приватный" }, { k: "public", l: "🌍 Публичный" }].map(t => (
+                  <button key={t.k} onClick={() => setForm(f => ({ ...f, type: t.k }))} className="btn" style={{
                     flex: 1, padding: "10px", borderRadius: 10, fontSize: 13, fontWeight: 700,
-                    background: form.type === t ? `${v.accent}12` : `${v.accent}03`,
-                    border: `1.5px solid ${form.type === t ? `${v.accent}30` : v.cardBorder}`,
-                    color: form.type === t ? v.accent : v.textMuted, cursor: "pointer", fontFamily: "inherit",
-                  }}>{t === "Приватный" ? "🔒" : "🌍"} {t}</button>
+                    background: form.type === t.k ? `${v.accent}12` : `${v.accent}03`,
+                    border: `1.5px solid ${form.type === t.k ? `${v.accent}30` : v.cardBorder}`,
+                    color: form.type === t.k ? v.accent : v.textMuted, cursor: "pointer", fontFamily: "inherit",
+                  }}>{t.l}</button>
                 ))}
               </div>
             </div>
-            <Field label="Правила (необязательно)" v={v}><ThemedInput v={v} value={form.rules} onChange={e => setForm(f => ({ ...f, rules: e.target.value }))} placeholder="Кто больше поймает" /></Field>
+            <div>
+              <div style={{ fontSize: 11, color: v.textDim, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>Подсчёт</div>
+              <div style={{ display: "flex", gap: 6 }}>
+                {[{ k: "count", l: "🐟 Кол-во" }, { k: "weight", l: "⚖️ Вес" }, { k: "length", l: "📏 Длина" }].map(s => (
+                  <button key={s.k} onClick={() => setForm(f => ({ ...f, scoring: s.k }))} className="btn" style={{
+                    flex: 1, padding: "8px", borderRadius: 10, fontSize: 12, fontWeight: 700,
+                    background: form.scoring === s.k ? `${v.accent}12` : `${v.accent}03`,
+                    border: `1.5px solid ${form.scoring === s.k ? `${v.accent}30` : v.cardBorder}`,
+                    color: form.scoring === s.k ? v.accent : v.textMuted, cursor: "pointer", fontFamily: "inherit",
+                  }}>{s.l}</button>
+                ))}
+              </div>
+            </div>
+            <Field label="Правила (необязательно)" v={v}><ThemedInput v={v} value={form.rules} onChange={e => setForm(f => ({ ...f, rules: e.target.value }))} placeholder="Кто больше поймает за день" /></Field>
             <Field label="Дата окончания" v={v}><ThemedInput v={v} type="date" value={form.endDate} onChange={e => setForm(f => ({ ...f, endDate: e.target.value }))} /></Field>
             <div style={{ display: "flex", gap: 8 }}>
               <button onClick={createTournament} className="btn" style={{ flex: 1, padding: 14, borderRadius: 14, background: v.btnPrimary, color: "#fff", fontWeight: 800, fontSize: 15, border: "none", cursor: "pointer", fontFamily: "inherit" }}>Создать</button>
@@ -1793,24 +1971,384 @@ function TournamentsScreen({ v }) {
           </div>
         </GlassCard>
       ) : (
-        <button onClick={() => { setCreating(true); haptic("medium"); }} className="btn f1" style={{ width: "100%", padding: 14, borderRadius: 16, background: `${v.stats[2]}10`, border: `1.5px solid ${v.stats[2]}25`, color: v.stats[2], fontWeight: 800, fontSize: 15, cursor: "pointer", fontFamily: "inherit", marginBottom: 12 }}>+ Создать турнир</button>
+        <button onClick={() => { setCreating(true); haptic("medium"); }} className="btn f2" style={{ width: "100%", padding: 14, borderRadius: 16, background: `${v.stats[2]}10`, border: `1.5px solid ${v.stats[2]}25`, color: v.stats[2], fontWeight: 800, fontSize: 15, cursor: "pointer", fontFamily: "inherit", marginBottom: 12 }}>+ Создать турнир</button>
       )}
 
-      {tournaments.map((t, i) => (
-        <GlassCard key={t.id} v={v} style={{ padding: 16, borderRadius: 20, animation: `fadeUp .4s ease ${i * 0.05}s both` }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }}>
-            <div><div style={{ fontSize: 17, fontWeight: 800 }}>🏆 {t.name}</div>{t.rules && <div style={{ fontSize: 12, color: v.textMuted, marginTop: 3 }}>{t.rules}</div>}</div>
-            <span style={{ fontSize: 10, padding: "4px 10px", borderRadius: 10, background: `${v.accent}12`, color: v.accent, fontWeight: 700, whiteSpace: "nowrap" }}>{t.type === "Приватный" ? "🔒" : "🌍"} {t.type}</span>
-          </div>
-          <div style={{ display: "flex", gap: 12, fontSize: 12, color: v.textMuted, marginBottom: 12 }}>
-            <span>👥 {t.participants?.length || 1}</span><span>📅 до {t.endDate}</span><span>📝 {t.createdAt}</span>
-          </div>
-          <button onClick={() => deleteTournament(t.id)} className="btn" style={{ background: "none", border: "none", color: v.btnDangerColor, fontSize: 12, cursor: "pointer", fontFamily: "inherit", padding: "4px 0" }}>Удалить турнир</button>
-        </GlassCard>
-      ))}
+      {loading ? (
+        <div style={{ textAlign: "center", padding: "30px 0", color: v.textMuted }}>⏳ Загрузка...</div>
+      ) : allTournaments.length === 0 && !creating ? (
+        <div style={{ textAlign: "center", padding: "40px 20px", color: v.textDim }}><div style={{ fontSize: 48, marginBottom: 12 }}>🏆</div><div style={{ fontSize: 14, lineHeight: 1.6 }}>Создай турнир или присоединись по коду</div></div>
+      ) : allTournaments.map((t, i) => {
+        const isMine = myTournaments.some(m => m.id === t.id);
+        return (
+          <button key={t.id} onClick={() => { haptic("light"); go(SCREENS.tournamentView, t); }} className="btn"
+            style={{ ...v.glass, width: "100%", textAlign: "left", padding: 16, borderRadius: 20, marginBottom: 10, cursor: "pointer", boxSizing: "border-box", animation: `fadeUp .4s ease ${i * 0.05}s both`, border: isMine ? `1.5px solid ${v.accent}25` : v.glass.border }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
+              <div><div style={{ fontSize: 17, fontWeight: 800 }}>🏆 {t.name}</div>{t.rules && <div style={{ fontSize: 12, color: v.textMuted, marginTop: 3 }}>{t.rules}</div>}</div>
+              <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
+                {isMine && <span style={{ fontSize: 10, padding: "3px 8px", borderRadius: 8, background: `${v.accent}15`, color: v.accent, fontWeight: 700 }}>Участвую</span>}
+                <span style={{ fontSize: 10, padding: "3px 8px", borderRadius: 8, background: `${v.accent}08`, color: v.textMuted, fontWeight: 700 }}>{t.type === "private" ? "🔒" : "🌍"}</span>
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 12, fontSize: 12, color: v.textMuted }}>
+              {t.invite_code && <span>🔑 {t.invite_code}</span>}
+              {t.end_date && <span>📅 до {t.end_date}</span>}
+              <span>{t.scoring === "weight" ? "⚖️ По весу" : t.scoring === "length" ? "📏 По длине" : "🐟 По кол-ву"}</span>
+            </div>
+            <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
+              <button onClick={(e) => { e.stopPropagation(); shareTournament(t); }} className="btn" style={{ padding: "6px 14px", borderRadius: 10, background: `${v.accent}10`, border: `1px solid ${v.accent}20`, color: v.accent, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>📤 Пригласить</button>
+            </div>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
-      {tournaments.length === 0 && !creating && (
-        <div style={{ textAlign: "center", padding: "40px 20px", color: v.textDim }}><div style={{ fontSize: 48, marginBottom: 12 }}>🏆</div><div style={{ fontSize: 14, lineHeight: 1.6 }}>Создай турнир и соревнуйся с друзьями</div></div>
+// ═══════════════════════════════════════
+//  TOURNAMENT VIEW (leaderboard + add catch)
+// ═══════════════════════════════════════
+function TournamentViewScreen({ back, tournament, v, saveCatch }) {
+  const [participants, setParticipants] = useState([]);
+  const [catches, setCatches] = useState([]);
+  const [adding, setAdding] = useState(false);
+  const [form, setForm] = useState({ fish: "", weight: "", length: "" });
+  const tgId = tg?.initDataUnsafe?.user?.id;
+
+  useEffect(() => {
+    if (!tournament) return;
+    const load = async () => {
+      const [parts, tc] = await Promise.all([
+        supabase.select("tournament_participants", `tournament_id=eq.${tournament.id}`),
+        supabase.select("tournament_catches", `tournament_id=eq.${tournament.id}&order=created_at.desc`),
+      ]);
+      setParticipants(parts || []);
+      setCatches(tc || []);
+    };
+    load();
+    // Refresh every 15s
+    const interval = setInterval(load, 15000);
+    return () => clearInterval(interval);
+  }, [tournament]);
+
+  const addCatch = async () => {
+    if (!form.fish || !tgId || !tournament) return;
+    await supabase.insert("tournament_catches", {
+      tournament_id: tournament.id, user_id: tgId,
+      fish: form.fish, weight: parseFloat(form.weight) || 0, length: parseFloat(form.length) || 0,
+    });
+    // Update participant stats
+    const myCatches = catches.filter(c => c.user_id === tgId);
+    const newCaught = myCatches.length + 1;
+    const newWeight = myCatches.reduce((a, c) => a + (parseFloat(c.weight) || 0), 0) + (parseFloat(form.weight) || 0);
+    await supabase.update("tournament_participants", `tournament_id=eq.${tournament.id}&user_id=eq.${tgId}`, { total_caught: newCaught, total_weight: newWeight });
+    // Also save to personal diary
+    saveCatch({ fish: form.fish, weight: form.weight, length: form.length, date: new Date().toLocaleDateString("ru-RU"), notes: `Турнир: ${tournament.name}` });
+    hapticNotify("success");
+    setForm({ fish: "", weight: "", length: "" });
+    setAdding(false);
+    // Refresh
+    const [parts, tc] = await Promise.all([
+      supabase.select("tournament_participants", `tournament_id=eq.${tournament.id}`),
+      supabase.select("tournament_catches", `tournament_id=eq.${tournament.id}&order=created_at.desc`),
+    ]);
+    setParticipants(parts || []);
+    setCatches(tc || []);
+  };
+
+  const shareTournament = () => {
+    haptic("medium");
+    const link = `https://t.me/KlevometrBot/app?startapp=t_${tournament.invite_code}`;
+    const text = `🏆 Присоединяйся к турниру "${tournament.name}" в Клёвометре!\nКод: ${tournament.invite_code}`;
+    if (tg) tg.openTelegramLink(`https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(text)}`);
+    else navigator.clipboard?.writeText(`${text}\n${link}`);
+  };
+
+  if (!tournament) return null;
+
+  // Sort leaderboard
+  const leaderboard = [...participants].sort((a, b) => {
+    if (tournament.scoring === "weight") return (b.total_weight || 0) - (a.total_weight || 0);
+    return (b.total_caught || 0) - (a.total_caught || 0);
+  });
+
+  return (
+    <div style={{ padding: "0 16px 16px" }}>
+      <div className="f0" style={{ padding: "16px 0" }}>
+        <div style={{ fontSize: 24, fontWeight: 900 }}>🏆 {tournament.name}</div>
+        <div style={{ fontSize: 13, color: v.textMuted, marginTop: 2 }}>{tournament.rules || "Без ограничений"}</div>
+      </div>
+
+      {/* Invite code banner */}
+      <GlassCard v={v} className="f1" style={{ padding: 14, borderRadius: 16, border: `1px solid ${v.accentBorder}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <div>
+          <div style={{ fontSize: 11, color: v.textDim, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1 }}>Код приглашения</div>
+          <div style={{ fontSize: 24, fontWeight: 900, color: v.accent, letterSpacing: 4, marginTop: 4 }}>{tournament.invite_code}</div>
+        </div>
+        <button onClick={shareTournament} className="btn" style={{ padding: "10px 16px", borderRadius: 12, background: v.btnPrimary, color: "#fff", fontWeight: 800, border: "none", cursor: "pointer", fontFamily: "inherit", fontSize: 13 }}>📤 Поделиться</button>
+      </GlassCard>
+
+      {/* Add catch */}
+      {adding ? (
+        <GlassCard v={v} className="f2" style={{ padding: 16, borderRadius: 16 }}>
+          <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 10 }}>Добавить улов в турнир</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <ThemedSelect v={v} value={form.fish} onChange={e => setForm(f => ({ ...f, fish: e.target.value }))}><option value="">Рыба</option>{FISH_LIST.map(f => <option key={f} value={f}>{f}</option>)}</ThemedSelect>
+            <div style={{ display: "flex", gap: 8 }}>
+              <ThemedInput v={v} type="number" step="0.1" placeholder="Вес (кг)" value={form.weight} onChange={e => setForm(f => ({ ...f, weight: e.target.value }))} style={{ flex: 1 }} />
+              <ThemedInput v={v} type="number" placeholder="Длина (см)" value={form.length} onChange={e => setForm(f => ({ ...f, length: e.target.value }))} style={{ flex: 1 }} />
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={addCatch} className="btn" style={{ flex: 1, padding: 12, borderRadius: 12, background: v.btnPrimary, color: "#fff", fontWeight: 800, border: "none", cursor: "pointer", fontFamily: "inherit" }}>Добавить</button>
+              <button onClick={() => setAdding(false)} className="btn" style={{ padding: "12px 16px", borderRadius: 12, border: `1px solid ${v.cardBorder}`, background: "transparent", color: v.textMuted, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>✕</button>
+            </div>
+          </div>
+        </GlassCard>
+      ) : (
+        <button onClick={() => setAdding(true)} className="btn f2" style={{ width: "100%", padding: 14, borderRadius: 16, background: `${v.accent}08`, border: `1.5px solid ${v.accent}25`, color: v.accent, fontWeight: 800, fontSize: 15, cursor: "pointer", fontFamily: "inherit", marginBottom: 10 }}>🐟 Записать улов</button>
+      )}
+
+      {/* Leaderboard */}
+      <GlassCard v={v} className="f3" style={{ padding: 16, borderRadius: 16 }}>
+        <div style={{ fontSize: 11, color: v.textDim, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, marginBottom: 12 }}>🏅 Лидерборд · {participants.length} участников</div>
+        {leaderboard.length === 0 ? (
+          <div style={{ textAlign: "center", padding: "20px 0", color: v.textDim, fontSize: 13 }}>Пока нет участников</div>
+        ) : leaderboard.map((p, i) => {
+          const isMe = p.user_id === tgId;
+          const medal = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `${i + 1}`;
+          const val = tournament.scoring === "weight" ? `${(p.total_weight || 0).toFixed(1)} кг` : `${p.total_caught || 0} шт`;
+          return (
+            <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 0", borderBottom: i < leaderboard.length - 1 ? `1px solid ${v.cardBorder}` : "none", background: isMe ? `${v.accent}08` : "transparent", margin: isMe ? "0 -8px" : 0, padding: isMe ? "10px 8px" : "10px 0", borderRadius: isMe ? 10 : 0 }}>
+              <span style={{ fontSize: i < 3 ? 20 : 14, width: 28, textAlign: "center", fontWeight: 900, color: v.textMuted }}>{medal}</span>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: isMe ? 800 : 600, fontSize: 14, color: isMe ? v.accent : v.text }}>{p.first_name || p.username || "—"}{isMe ? " (ты)" : ""}</div>
+                {p.username && <div style={{ fontSize: 11, color: v.textDim }}>@{p.username}</div>}
+              </div>
+              <div style={{ fontWeight: 900, fontSize: 16, color: i === 0 ? v.accent : v.text }}>{val}</div>
+            </div>
+          );
+        })}
+      </GlassCard>
+
+      {/* Recent catches */}
+      {catches.length > 0 && (
+        <GlassCard v={v} className="f4" style={{ padding: 16, borderRadius: 16 }}>
+          <div style={{ fontSize: 11, color: v.textDim, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, marginBottom: 10 }}>Последние уловы</div>
+          {catches.slice(0, 10).map((c, i) => (
+            <div key={c.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0", borderBottom: i < Math.min(catches.length, 10) - 1 ? `1px solid ${v.cardBorder}` : "none" }}>
+              <span style={{ fontSize: 16 }}>{fishEmoji(c.fish)}</span>
+              <span style={{ flex: 1, fontSize: 13, fontWeight: 600 }}>{c.fish}</span>
+              {c.weight > 0 && <span style={{ fontSize: 12, color: v.stats[2] }}>{c.weight}кг</span>}
+              {c.length > 0 && <span style={{ fontSize: 12, color: v.stats[0] }}>{c.length}см</span>}
+            </div>
+          ))}
+        </GlassCard>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════
+//  TOURNAMENT JOIN (via deep link)
+// ═══════════════════════════════════════
+function TournamentJoinScreen({ back, inviteData, v, go }) {
+  const [tournament, setTournament] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [joined, setJoined] = useState(false);
+  const tgId = tg?.initDataUnsafe?.user?.id;
+  const tgName = tg?.initDataUnsafe?.user?.first_name || "Игрок";
+  const tgUsername = tg?.initDataUnsafe?.user?.username || "";
+
+  useEffect(() => {
+    const load = async () => {
+      if (!inviteData?.invite_code) { setLoading(false); return; }
+      const ts = await supabase.select("tournaments", `invite_code=eq.${inviteData.invite_code}`);
+      if (ts && ts.length > 0) setTournament(ts[0]);
+      setLoading(false);
+    };
+    load();
+  }, [inviteData]);
+
+  const join = async () => {
+    if (!tournament || !tgId) return;
+    const existing = await supabase.select("tournament_participants", `tournament_id=eq.${tournament.id}&user_id=eq.${tgId}`);
+    if (!existing || existing.length === 0) {
+      await supabase.insert("tournament_participants", {
+        tournament_id: tournament.id, user_id: tgId,
+        username: tgUsername, first_name: tgName,
+      });
+    }
+    hapticNotify("success");
+    setJoined(true);
+    setTimeout(() => go(SCREENS.tournamentView, tournament), 500);
+  };
+
+  if (loading) return <div style={{ padding: "60px 20px", textAlign: "center", color: v.textMuted }}>⏳ Загрузка турнира...</div>;
+  if (!tournament) return (
+    <div style={{ padding: "60px 20px", textAlign: "center" }}>
+      <div style={{ fontSize: 48, marginBottom: 16 }}>😕</div>
+      <div style={{ fontSize: 16, fontWeight: 700, color: v.text }}>Турнир не найден</div>
+      <div style={{ fontSize: 13, color: v.textMuted, marginTop: 8 }}>Код приглашения недействителен</div>
+      <button onClick={back} className="btn" style={{ marginTop: 20, padding: "12px 30px", borderRadius: 14, background: v.btnPrimary, color: "#fff", fontWeight: 800, border: "none", cursor: "pointer", fontFamily: "inherit" }}>Назад</button>
+    </div>
+  );
+
+  return (
+    <div style={{ padding: "40px 16px", textAlign: "center" }}>
+      <div style={{ fontSize: 64, marginBottom: 16 }}>🏆</div>
+      <div style={{ fontSize: 22, fontWeight: 900, color: v.text }}>{tournament.name}</div>
+      {tournament.rules && <div style={{ fontSize: 14, color: v.textMuted, marginTop: 8 }}>{tournament.rules}</div>}
+      <div style={{ marginTop: 16, display: "flex", justifyContent: "center", gap: 16 }}>
+        <div style={{ textAlign: "center" }}><div style={{ fontSize: 12, color: v.textDim }}>Подсчёт</div><div style={{ fontSize: 14, fontWeight: 700, color: v.accent, marginTop: 2 }}>{tournament.scoring === "weight" ? "По весу" : tournament.scoring === "length" ? "По длине" : "По кол-ву"}</div></div>
+        {tournament.end_date && <div style={{ textAlign: "center" }}><div style={{ fontSize: 12, color: v.textDim }}>До</div><div style={{ fontSize: 14, fontWeight: 700, color: v.text, marginTop: 2 }}>{tournament.end_date}</div></div>}
+      </div>
+      <button onClick={join} disabled={joined} className="btn" style={{ marginTop: 30, padding: "16px 50px", borderRadius: 18, background: joined ? `${v.accent}30` : v.btnPrimary, color: "#fff", fontWeight: 900, fontSize: 18, border: "none", cursor: "pointer", fontFamily: "inherit" }}>
+        {joined ? "✅ Присоединился!" : "Присоединиться"}
+      </button>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════
+//  EDIT PROFILE
+// ═══════════════════════════════════════
+function EditProfileScreen({ back, v, sbUser, updateProfile, userAvatar }) {
+  const AVATAR_OPTIONS = ["🎣","🐟","🐠","🐡","🦈","🐊","🐢","🦀","🦑","🐙","🌊","⛵","🚤","🎯","🏆","👤","🧔","👨‍🦰","🧑‍🦱","👩","🐻","🦅","🐺","🦊"];
+  const [nickname, setNickname] = useState(sbUser?.nickname || tg?.initDataUnsafe?.user?.first_name || "");
+  const [avatar, setAvatar] = useState(userAvatar || "🎣");
+  const [saving, setSaving] = useState(false);
+
+  const handleSave = async () => {
+    setSaving(true);
+    await updateProfile({ nickname: nickname.trim() || null, avatar_emoji: avatar });
+    hapticNotify("success");
+    setSaving(false);
+    back();
+  };
+
+  return (
+    <div style={{ padding: "0 16px 16px" }}>
+      <div className="f0" style={{ padding: "16px 0" }}><div style={{ fontSize: 22, fontWeight: 900 }}>Редактировать профиль</div></div>
+
+      {/* Avatar picker */}
+      <GlassCard v={v} className="f1" style={{ padding: 16, borderRadius: 16, textAlign: "center" }}>
+        <div style={{ width: 80, height: 80, borderRadius: "50%", background: v.accentGrad, margin: "0 auto 12px", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 40, border: `3px solid ${v.accentBorder}` }}>{avatar}</div>
+        <div style={{ fontSize: 11, color: v.textDim, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, marginBottom: 10 }}>Выбери аватар</div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, justifyContent: "center" }}>
+          {AVATAR_OPTIONS.map(e => (
+            <button key={e} onClick={() => { setAvatar(e); haptic("light"); }} className="btn" style={{
+              width: 44, height: 44, borderRadius: 12, fontSize: 22,
+              display: "flex", alignItems: "center", justifyContent: "center",
+              background: avatar === e ? `${v.accent}20` : `${v.accent}05`,
+              border: `2px solid ${avatar === e ? v.accent : "transparent"}`,
+              cursor: "pointer", transition: "all .2s",
+            }}>{e}</button>
+          ))}
+        </div>
+      </GlassCard>
+
+      {/* Nickname */}
+      <GlassCard v={v} className="f2" style={{ padding: 16, borderRadius: 16 }}>
+        <Field label="Никнейм" v={v}>
+          <ThemedInput v={v} value={nickname} onChange={e => setNickname(e.target.value)} placeholder="Как тебя звать?" maxLength={30} />
+        </Field>
+        <div style={{ fontSize: 11, color: v.textDim, marginTop: 8 }}>Отображается в турнирах и ленте друзей</div>
+      </GlassCard>
+
+      <button onClick={handleSave} disabled={saving} className="btn" style={{ width: "100%", padding: 15, borderRadius: 16, border: "none", background: v.btnPrimary, color: "#fff", fontWeight: 800, fontSize: 16, cursor: "pointer", fontFamily: "inherit", marginTop: 6, opacity: saving ? 0.6 : 1 }}>
+        {saving ? "⏳ Сохранение..." : "💾 Сохранить"}
+      </button>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════
+//  LOCATION PICKER
+// ═══════════════════════════════════════
+function LocationPickerScreen({ back, v, updateProfile, clearCustomLocation, setManualLocation, sbUser }) {
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searching, setSearching] = useState(false);
+  const [searchResults, setSearchResults] = useState([]);
+  const currentCity = sbUser?.custom_city;
+
+  const searchCity = async () => {
+    if (!searchQuery.trim()) return;
+    setSearching(true);
+    try {
+      const res = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(searchQuery)}&format=json&limit=5&accept-language=ru`);
+      const data = await res.json();
+      setSearchResults(data.map(d => ({ name: d.display_name.split(",")[0], fullName: d.display_name, lat: parseFloat(d.lat), lon: parseFloat(d.lon) })));
+    } catch (e) { console.warn(e); }
+    setSearching(false);
+  };
+
+  const selectCity = async (city) => {
+    await updateProfile({ custom_lat: city.lat, custom_lng: city.lon, custom_city: city.name });
+    setManualLocation({ lat: city.lat, lon: city.lon, city: city.name });
+    hapticNotify("success");
+    back();
+  };
+
+  const resetToAuto = async () => {
+    await clearCustomLocation();
+    setManualLocation(null);
+    hapticNotify("success");
+    back();
+  };
+
+  return (
+    <div style={{ padding: "0 16px 16px" }}>
+      <div className="f0" style={{ padding: "16px 0" }}>
+        <div style={{ fontSize: 22, fontWeight: 900 }}>Геолокация</div>
+        <div style={{ fontSize: 13, color: v.textMuted, marginTop: 2 }}>Для прогноза погоды и клёва</div>
+      </div>
+
+      {currentCity && (
+        <GlassCard v={v} className="f1" style={{ padding: 14, borderRadius: 16, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div><div style={{ fontSize: 11, color: v.textDim, fontWeight: 700 }}>ТЕКУЩАЯ ЛОКАЦИЯ</div><div style={{ fontSize: 16, fontWeight: 800, color: v.accent, marginTop: 4 }}>📍 {currentCity}</div></div>
+          <button onClick={resetToAuto} className="btn" style={{ padding: "8px 14px", borderRadius: 10, background: v.btnDanger, border: `1px solid ${v.btnDangerBorder}`, color: v.btnDangerColor, fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>Сбросить</button>
+        </GlassCard>
+      )}
+
+      {/* Search */}
+      <GlassCard v={v} className="f2" style={{ padding: 14, borderRadius: 16 }}>
+        <div style={{ fontSize: 11, color: v.textDim, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>Поиск города</div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <ThemedInput v={v} value={searchQuery} onChange={e => setSearchQuery(e.target.value)} onKeyDown={e => e.key === "Enter" && searchCity()} placeholder="Москва, Казань..." style={{ flex: 1 }} />
+          <button onClick={searchCity} className="btn" style={{ padding: "10px 16px", borderRadius: 12, background: v.btnPrimary, color: "#fff", fontWeight: 800, border: "none", cursor: "pointer", fontFamily: "inherit" }}>{searching ? "..." : "🔍"}</button>
+        </div>
+        {searchResults.length > 0 && (
+          <div style={{ marginTop: 8 }}>
+            {searchResults.map((r, i) => (
+              <button key={i} onClick={() => selectCity(r)} className="btn" style={{ width: "100%", textAlign: "left", padding: "10px 12px", borderRadius: 10, marginBottom: 4, background: `${v.accent}05`, border: `1px solid ${v.cardBorder}`, cursor: "pointer", fontFamily: "inherit" }}>
+                <div style={{ fontWeight: 700, fontSize: 14, color: v.text }}>📍 {r.name}</div>
+                <div style={{ fontSize: 11, color: v.textDim, marginTop: 2 }}>{r.fullName}</div>
+              </button>
+            ))}
+          </div>
+        )}
+      </GlassCard>
+
+      {/* Popular cities */}
+      <GlassCard v={v} className="f3" style={{ padding: 16, borderRadius: 16 }}>
+        <div style={{ fontSize: 11, color: v.textDim, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, marginBottom: 10 }}>Популярные города</div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+          {POPULAR_CITIES.map(city => (
+            <button key={city.name} onClick={() => selectCity(city)} className="btn" style={{
+              padding: "8px 14px", borderRadius: 12,
+              background: currentCity === city.name ? `${v.accent}15` : `${v.accent}05`,
+              border: `1px solid ${currentCity === city.name ? v.accent : v.cardBorder}`,
+              color: currentCity === city.name ? v.accent : v.text,
+              fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit",
+            }}>{city.name}</button>
+          ))}
+        </div>
+      </GlassCard>
+
+      {!currentCity && (
+        <div style={{ textAlign: "center", padding: "16px 0", color: v.textDim, fontSize: 13 }}>
+          Сейчас используется автоматическая геолокация
+        </div>
       )}
     </div>
   );
