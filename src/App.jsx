@@ -380,6 +380,149 @@ async function fetchForecast(lat, lon) {
 //  ADVANCED FORECAST ENGINE — 10+ метрик
 // ═══════════════════════════════════════
 
+// ── Региональная база рыб: какие виды водятся в каких водоёмах ──
+// Каждый регион: центр (lat, lon), радиус (км), водоёмы, виды рыб
+const REGIONAL_FISH = [
+  {
+    id: "don_lower", name: "Нижний Дон", region: "Ростовская обл.",
+    waters: "Дон, Сев. Донец, Маныч, Цимлянское вдхр.",
+    lat: 47.23, lon: 39.70, radius: 180,
+    fish: ["Щука","Окунь","Судак","Карп","Карась","Лещ","Сом","Плотва","Жерех"],
+    absent: ["Налим","Форель"], // важно: этих рыб тут НЕТ
+    note: "Южный регион, тёплая вода. Налим и форель не обитают.",
+  },
+  {
+    id: "don_middle", name: "Средний Дон", region: "Воронежская обл.",
+    waters: "Дон, Воронеж, Хопёр, Битюг",
+    lat: 51.67, lon: 39.18, radius: 150,
+    fish: ["Щука","Окунь","Судак","Карп","Карась","Лещ","Сом","Плотва","Жерех","Налим"],
+    absent: ["Форель"],
+    note: "Средняя полоса. Налим встречается в верховьях притоков.",
+  },
+  {
+    id: "volga_upper", name: "Верхняя Волга", region: "Тверская, Ярославская обл.",
+    waters: "Волга, Рыбинское вдхр., Иваньковское вдхр.",
+    lat: 56.86, lon: 35.92, radius: 200,
+    fish: ["Щука","Окунь","Судак","Карп","Карась","Лещ","Сом","Плотва","Жерех","Налим"],
+    absent: ["Форель"],
+    note: "Крупные водохранилища, богатая ихтиофауна.",
+  },
+  {
+    id: "volga_middle", name: "Средняя Волга", region: "Самарская, Саратовская обл.",
+    waters: "Волга, Куйбышевское вдхр., Саратовское вдхр.",
+    lat: 53.20, lon: 50.10, radius: 200,
+    fish: ["Щука","Окунь","Судак","Карп","Карась","Лещ","Сом","Плотва","Жерех","Налим"],
+    absent: ["Форель"],
+    note: "Волжские водохранилища — судак, лещ, жерех в изобилии.",
+  },
+  {
+    id: "moscow_region", name: "Подмосковье", region: "Москва, Московская обл.",
+    waters: "Ока, Москва-река, Клязьма, Можайское вдхр.",
+    lat: 55.76, lon: 37.62, radius: 150,
+    fish: ["Щука","Окунь","Судак","Карп","Карась","Лещ","Сом","Плотва","Жерех","Налим"],
+    absent: ["Форель"],
+    note: "Все основные пресноводные виды. Налим есть в Оке и притоках.",
+  },
+  {
+    id: "spb_region", name: "Ленинградская обл.", region: "СПб, Ленобласть",
+    waters: "Нева, Ладога, Финский залив, Вуокса",
+    lat: 59.93, lon: 30.34, radius: 200,
+    fish: ["Щука","Окунь","Судак","Карп","Карась","Лещ","Сом","Плотва","Налим","Форель"],
+    absent: ["Жерех"],
+    note: "Холодные озёра — форель и налим активны. Жерех редок.",
+  },
+  {
+    id: "kazan_region", name: "Татарстан", region: "Казань, Татарстан",
+    waters: "Волга, Кама, Куйбышевское вдхр.",
+    lat: 55.79, lon: 49.12, radius: 180,
+    fish: ["Щука","Окунь","Судак","Карп","Карась","Лещ","Сом","Плотва","Жерех","Налим"],
+    absent: ["Форель"],
+    note: "Слияние Волги и Камы — одно из лучших мест для рыбалки в РФ.",
+  },
+  {
+    id: "ural_region", name: "Урал", region: "Екатеринбург, Свердловская обл.",
+    waters: "Исеть, Чусовая, Уфа, озёра Урала",
+    lat: 56.84, lon: 60.61, radius: 200,
+    fish: ["Щука","Окунь","Судак","Карп","Карась","Лещ","Плотва","Налим","Форель"],
+    absent: ["Сом","Жерех"],
+    note: "Горные реки — форель. Равнинные — щука, окунь. Сом и жерех редки.",
+  },
+  {
+    id: "novosibirsk_region", name: "Новосибирская обл.", region: "Новосибирск",
+    waters: "Обь, Новосибирское вдхр., Бердь",
+    lat: 55.01, lon: 82.94, radius: 200,
+    fish: ["Щука","Окунь","Судак","Карп","Карась","Лещ","Плотва","Налим"],
+    absent: ["Сом","Жерех","Форель"],
+    note: "Сибирские реки. Сом, жерех и форель не характерны для Оби.",
+  },
+  {
+    id: "krasnoyarsk_region", name: "Красноярский край", region: "Красноярск",
+    waters: "Енисей, Красноярское вдхр., Мана",
+    lat: 56.02, lon: 92.89, radius: 250,
+    fish: ["Щука","Окунь","Лещ","Карась","Плотва","Налим","Форель"],
+    absent: ["Карп","Сом","Жерех","Судак"],
+    note: "Холодный Енисей — форель, налим, хариус. Теплолюбивые виды отсутствуют.",
+  },
+  {
+    id: "krasnodar_region", name: "Краснодарский край", region: "Краснодар, Кубань",
+    waters: "Кубань, Краснодарское вдхр., лиманы",
+    lat: 45.04, lon: 38.98, radius: 180,
+    fish: ["Щука","Окунь","Судак","Карп","Карась","Лещ","Сом","Плотва","Жерех"],
+    absent: ["Налим","Форель"],
+    note: "Южный регион, тёплый климат. Налим и форель не водятся.",
+  },
+  {
+    id: "volgograd_region", name: "Волгоградская обл.", region: "Волгоград",
+    waters: "Волга, Волгоградское вдхр., Дон, Цимлянское вдхр.",
+    lat: 48.71, lon: 44.51, radius: 180,
+    fish: ["Щука","Окунь","Судак","Карп","Карась","Лещ","Сом","Плотва","Жерех"],
+    absent: ["Налим","Форель"],
+    note: "Нижняя Волга и Дон — рай для хищника. Слишком тепло для налима.",
+  },
+  {
+    id: "astrakhan_region", name: "Астраханская обл.", region: "Астрахань",
+    waters: "Волга (дельта), Ахтуба, ерики",
+    lat: 46.35, lon: 48.04, radius: 150,
+    fish: ["Щука","Окунь","Судак","Карп","Карась","Лещ","Сом","Плотва","Жерех"],
+    absent: ["Налим","Форель"],
+    note: "Дельта Волги — легендарное место. Трофейные сомы и сазаны.",
+  },
+  {
+    id: "nn_region", name: "Нижегородская обл.", region: "Нижний Новгород",
+    waters: "Волга, Ока, Горьковское вдхр.",
+    lat: 56.30, lon: 43.94, radius: 150,
+    fish: ["Щука","Окунь","Судак","Карп","Карась","Лещ","Сом","Плотва","Жерех","Налим"],
+    absent: ["Форель"],
+    note: "Слияние Волги и Оки — все основные виды включая налима.",
+  },
+];
+
+// ── Определение региона по координатам ──
+function getRegionByCoords(lat, lon) {
+  if (!lat || !lon) return null;
+  let bestRegion = null;
+  let bestDist = Infinity;
+  for (const region of REGIONAL_FISH) {
+    const dlat = (region.lat - lat) * 111; // ~111 км/градус
+    const dlon = (region.lon - lon) * 111 * Math.cos(lat * Math.PI / 180);
+    const dist = Math.sqrt(dlat * dlat + dlon * dlon);
+    if (dist < region.radius && dist < bestDist) {
+      bestDist = dist;
+      bestRegion = region;
+    }
+  }
+  return bestRegion;
+}
+
+// ── Получить список доступных рыб для локации ──
+function getLocalFish(lat, lon) {
+  const region = getRegionByCoords(lat, lon);
+  if (!region) return { fish: Object.keys(FISH_PROFILES), region: null, note: "Регион не определён — показаны все виды" };
+  // Фильтруем только тех, кто есть в FISH_PROFILES и в региональном списке
+  const available = region.fish.filter(f => FISH_PROFILES[f]);
+  return { fish: available, region, note: region.note };
+}
+
 const FISH_PROFILES = {
   "Щука": {
     emoji: "🐟", type: "predator",
@@ -609,14 +752,14 @@ function computeFishScore(fishName, weather, moon, hour, month) {
   return { score, level, tip, isSpawn, waterTemp: Math.round(waterTemp) };
 }
 
-function computeBiteScoreAdvanced(weather, moon, hour) {
+function computeBiteScoreAdvanced(weather, moon, hour, lat, lon) {
   const month = new Date().getMonth();
-  const all = Object.keys(FISH_PROFILES).map(f => ({ fish: f, emoji: FISH_PROFILES[f].emoji, ...computeFishScore(f, weather, moon, hour, month) }));
+  const local = getLocalFish(lat, lon);
+  const fishList = local.fish;
+  const all = fishList.map(f => ({ fish: f, emoji: FISH_PROFILES[f]?.emoji || "🐟", ...computeFishScore(f, weather, moon, hour, month) }));
   const top = [...all].sort((a, b) => b.score - a.score).slice(0, 3);
-  const popular = ["Щука","Окунь","Карп","Карась","Лещ","Судак","Плотва"];
-  const popScores = all.filter(s => popular.includes(s.fish));
-  const avg = Math.round(popScores.reduce((a, s) => a + s.score, 0) / popScores.length);
-  return { score: Math.max(5, Math.min(95, avg)), topFish: top, allScores: all, month, season: getSeasonName(month) };
+  const avg = all.length > 0 ? Math.round(all.reduce((a, s) => a + s.score, 0) / all.length) : 50;
+  return { score: Math.max(5, Math.min(95, avg)), topFish: top, allScores: all, month, season: getSeasonName(month), region: local.region, regionNote: local.note };
 }
 
 function computeBiteScore(weather, moon, hour) {
@@ -661,6 +804,7 @@ function useWeather() {
   const [forecast, setForecast] = useState(null);
   const [loading, setLoading] = useState(true);
   const [locationName, setLocationName] = useState("");
+  const [geoCoords, setGeoCoords] = useState(null);
   const [manualLocation, setManualLocation] = useState(() => storage.get("manualLocation", null));
 
   useEffect(() => {
@@ -673,6 +817,7 @@ function useWeather() {
           try { const pos = await requestGeolocation(); lat = pos.lat; lon = pos.lon; }
           catch { lat = 55.75; lon = 37.62; }
         }
+        setGeoCoords({ lat, lon });
         const [w, f] = await Promise.all([fetchWeather(lat, lon), fetchForecast(lat, lon)]);
         if (w) { setWeather(w); setLocationName(w.cityName || ""); }
         if (f) setForecast(f);
@@ -682,7 +827,7 @@ function useWeather() {
     load();
   }, [manualLocation]);
 
-  return { weather, forecast, loading, locationName, setManualLocation };
+  return { weather, forecast, loading, locationName, setManualLocation, geoCoords };
 }
 
 // ── Constants ──
@@ -828,7 +973,7 @@ export default function Klevometr() {
   const [spots, setSpots] = useSync("spots", [], null);
   const [sessions, setSessions] = useSync("sessions", [], "sessions");
 
-  const { weather, forecast, loading: weatherLoading, locationName, setManualLocation } = useWeather();
+  const { weather, forecast, loading: weatherLoading, locationName, setManualLocation, geoCoords } = useWeather();
   const moon = getMoonPhase();
   const currentHour = new Date().getHours();
   const biteScore = computeBiteScore(weather, moon, currentHour);
@@ -915,7 +1060,7 @@ export default function Klevometr() {
   const saveSpot = (spot) => setSpots(prev => [{ id: Date.now(), ...spot }, ...prev]);
   const deleteSpot = (id) => setSpots(prev => prev.filter(s => s.id !== id));
 
-  const wd = { weather, forecast, moon, biteScore, weatherLoading, locationName, currentHour, setManualLocation };
+  const wd = { weather, forecast, moon, biteScore, weatherLoading, locationName, currentHour, setManualLocation, geoCoords };
   const shared = { catches, gearItems, spots, sessions, saveCatch, deleteCatch, saveGear, deleteGear, saveSpot, deleteSpot };
   const profileProps = { sbUser, updateProfile, clearCustomLocation, userAvatar };
 
@@ -1443,11 +1588,17 @@ function ViewCatchScreen({ back, catchItem, deleteCatch, v }) {
 //  FORECAST
 // ═══════════════════════════════════════
 function ForecastScreen({ wd, v }) {
-  const { weather, forecast, moon, biteScore, weatherLoading, locationName, currentHour } = wd;
-  const [selectedFish, setSelectedFish] = useState(null); // null = общий прогноз
+  const { weather, forecast, moon, biteScore, weatherLoading, locationName, currentHour, geoCoords } = wd;
+  const [selectedFish, setSelectedFish] = useState(null);
   const month = new Date().getMonth();
 
-  const advanced = useMemo(() => weather ? computeBiteScoreAdvanced(weather, moon, currentHour) : null, [weather, moon, currentHour]);
+  // Regional fish filtering
+  const localInfo = useMemo(() => {
+    if (!geoCoords) return { fish: Object.keys(FISH_PROFILES), region: null, note: "" };
+    return getLocalFish(geoCoords.lat, geoCoords.lon);
+  }, [geoCoords]);
+
+  const advanced = useMemo(() => weather ? computeBiteScoreAdvanced(weather, moon, currentHour, geoCoords?.lat, geoCoords?.lon) : null, [weather, moon, currentHour, geoCoords]);
 
   // Hourly scores for selected fish or general
   const hourlyScores = useMemo(() => Array.from({ length: 20 }, (_, i) => {
@@ -1493,7 +1644,7 @@ function ForecastScreen({ wd, v }) {
     });
   }, [forecast, selectedFish, month]);
 
-  const fishList = Object.entries(FISH_PROFILES);
+  const fishList = localInfo.fish.map(name => [name, FISH_PROFILES[name]]).filter(([_, p]) => p);
 
   return (
     <div style={{ padding: "0 16px 16px" }}>
@@ -1502,6 +1653,15 @@ function ForecastScreen({ wd, v }) {
         <div style={{ fontSize: 13, color: v.textMuted, marginTop: 2 }}>
           {weather ? `${weather.cityName} · ${getSeasonName(month)}` : weatherLoading ? "Загрузка..." : "Нет данных"}
         </div>
+        {localInfo.region && (
+          <div style={{ marginTop: 6, display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 12px", borderRadius: 12, background: `${v.accent}08`, border: `1px solid ${v.accent}15` }}>
+            <span style={{ fontSize: 12 }}>🗺</span>
+            <span style={{ fontSize: 11, color: v.accent, fontWeight: 600 }}>{localInfo.region.waters}</span>
+          </div>
+        )}
+        {localInfo.region && (
+          <div style={{ fontSize: 11, color: v.textDim, marginTop: 4 }}>📍 {localInfo.region.note}</div>
+        )}
       </div>
 
       {/* ── Fish selector ── */}
