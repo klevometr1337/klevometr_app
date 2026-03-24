@@ -376,23 +376,268 @@ async function fetchForecast(lat, lon) {
   } catch (e) { return []; }
 }
 
+// ═══════════════════════════════════════
+//  ADVANCED FORECAST ENGINE — 10+ метрик
+// ═══════════════════════════════════════
+
+const FISH_PROFILES = {
+  "Щука": {
+    emoji: "🐟", type: "predator",
+    waterTemp: { min: 4, active: 8, peakLow: 13, peakHigh: 16, decline: 20, max: 23 },
+    pressure: { ideal: 748, range: 12, prefersLow: true, changeSensitivity: 0.9 },
+    hourlyActivity: [.1,.05,.05,.1,.2,.5,.8,.9,.7,.5,.3,.2,.15,.15,.2,.3,.5,.7,.9,.85,.6,.4,.2,.15],
+    seasonalActivity: [.3,.3,.5,.8,.95,.7,.5,.6,.8,1,.7,.4],
+    prefersOvercast: true, prefersRain: true, windTolerance: 7,
+    goodWindDirs: ["Ю","ЮЗ","З"], spawnMonth: 2, spawnWeeks: 3,
+    tips: {
+      great: "Щука на охоте! Крупные воблеры, джерки. У коряг и на бровках. Агрессивная проводка с паузами.",
+      good: "Колебалки среднего размера. Заросли кувшинок и камыша. Утро и вечер.",
+      weak: "Мелкие приманки, медленная проводка у дна. Силикон на джиг-головке.",
+      bad: "Попробуй живца на жерлице — пассивная подача может сработать.",
+    },
+  },
+  "Окунь": {
+    emoji: "🐠", type: "predator",
+    waterTemp: { min: 4, active: 8, peakLow: 12, peakHigh: 15, decline: 20, max: 21 },
+    pressure: { ideal: 760, range: 8, prefersLow: false, changeSensitivity: 0.7 },
+    hourlyActivity: [.05,.05,.05,.1,.3,.6,.9,.95,.8,.6,.4,.3,.25,.3,.35,.5,.7,.9,.85,.7,.4,.2,.1,.05],
+    seasonalActivity: [.5,.5,.6,.8,.9,.8,.7,.75,.9,1,.6,.5],
+    prefersOvercast: false, prefersRain: false, windTolerance: 5,
+    goodWindDirs: ["Ю","ЮЗ","З","ЮВ"], spawnMonth: 3, spawnWeeks: 2,
+    tips: {
+      great: "Окунь в котлах! Вращалки, микроджиг, попперы. Где один — там десять.",
+      good: "Мелкие блёсны 2-5г, отводной поводок. Прибрежная зона.",
+      weak: "Микроджиг с пассивкой. У свалов на глубину.",
+      bad: "Червь на поплавочку у дна. Или переключись на другую рыбу.",
+    },
+  },
+  "Судак": {
+    emoji: "🐟", type: "predator",
+    waterTemp: { min: 4, active: 6, peakLow: 12, peakHigh: 18, decline: 22, max: 25 },
+    pressure: { ideal: 760, range: 6, prefersLow: false, changeSensitivity: 0.85 },
+    hourlyActivity: [.3,.2,.15,.2,.3,.5,.6,.5,.3,.2,.15,.1,.1,.1,.1,.15,.3,.5,.7,.9,1,.8,.5,.4],
+    seasonalActivity: [.3,.3,.5,.8,.9,.8,.6,.7,.9,1,.6,.3],
+    prefersOvercast: true, prefersRain: false, windTolerance: 6,
+    goodWindDirs: ["Ю","ЮЗ"], spawnMonth: 4, spawnWeeks: 3,
+    tips: {
+      great: "Джиг на бровках и свалах! Виброхвост, твистер. Вечерний и ночной выходы.",
+      good: "Поролонки, мандулы. Жёсткое дно — песок, камень.",
+      weak: "Отводной поводок с мелкой пассивкой. Ночью может быть лучше.",
+      bad: "Тяжёлый джиг по русловым ямам. Или подожди смены погоды.",
+    },
+  },
+  "Карп": {
+    emoji: "🐡", type: "peaceful",
+    waterTemp: { min: 10, active: 14, peakLow: 18, peakHigh: 22, decline: 26, max: 30 },
+    pressure: { ideal: 758, range: 14, prefersLow: false, changeSensitivity: 0.5 },
+    hourlyActivity: [.3,.2,.15,.2,.3,.4,.5,.6,.5,.3,.2,.15,.1,.15,.2,.3,.5,.6,.7,.8,.9,1,.7,.5],
+    seasonalActivity: [.05,.05,.1,.3,.6,.8,.9,1,.8,.5,.2,.05],
+    prefersOvercast: false, prefersRain: false, windTolerance: 4,
+    goodWindDirs: ["Ю","ЮЗ","ЮВ"], spawnMonth: 4, spawnWeeks: 4,
+    tips: {
+      great: "Бойлы, кукуруза, пеллетс! Прикорми точку. Ночь — лучшее время.",
+      good: "Волосяная оснастка с бойлом. Заиленные участки с ракушечником.",
+      weak: "Мелкие насадки, PVA-пакеты. Минимум шума, тонкие поводки.",
+      bad: "Попробуй зиг-риг в толще воды или подожди потепления.",
+    },
+  },
+  "Карась": {
+    emoji: "🐠", type: "peaceful",
+    waterTemp: { min: 8, active: 12, peakLow: 16, peakHigh: 22, decline: 26, max: 28 },
+    pressure: { ideal: 758, range: 16, prefersLow: false, changeSensitivity: 0.4 },
+    hourlyActivity: [.1,.05,.05,.1,.2,.5,.8,.9,.7,.5,.3,.2,.15,.15,.2,.4,.6,.8,.9,.8,.5,.3,.2,.15],
+    seasonalActivity: [.05,.05,.1,.4,.7,.9,1,.9,.7,.4,.1,.05],
+    prefersOvercast: false, prefersRain: false, windTolerance: 4,
+    goodWindDirs: ["Ю","ЮЗ","ЮВ","В"], spawnMonth: 4, spawnWeeks: 3,
+    tips: {
+      great: "Червь, опарыш, манка, кукуруза! Поплавочка или фидер. Прикормка обязательна.",
+      good: "Бутерброд червь+опарыш. У камыша на глубине 1-2м.",
+      weak: "Мелкие крючки, тонкая леска. Тесто с чесноком, перловка.",
+      bad: "Навозный червь на тонкой оснастке. Или смени водоём.",
+    },
+  },
+  "Лещ": {
+    emoji: "🐟", type: "peaceful",
+    waterTemp: { min: 5, active: 10, peakLow: 15, peakHigh: 18, decline: 22, max: 23 },
+    pressure: { ideal: 757, range: 8, prefersLow: false, changeSensitivity: 0.8 },
+    hourlyActivity: [.15,.1,.1,.2,.4,.7,.9,.8,.5,.3,.2,.15,.1,.15,.3,.5,.7,.85,.9,1,.7,.4,.25,.2],
+    seasonalActivity: [.1,.1,.2,.5,.8,.9,1,.9,.7,.5,.2,.1],
+    prefersOvercast: true, prefersRain: false, windTolerance: 5,
+    goodWindDirs: ["Ю","ЮЗ","ЮВ"], spawnMonth: 4, spawnWeeks: 3,
+    tips: {
+      great: "Фидер с мотылём! Опарыш, червь. Ямы и бровки.",
+      good: "Кормушка 40-60г. Пучок мотыля. Дистанция 30-50м.",
+      weak: "Тонкие поводки 0.10-0.12. Ночная ловля может быть лучше.",
+      bad: "Попробуй подлещика на мелководье или плотву.",
+    },
+  },
+  "Сом": {
+    emoji: "🐟", type: "predator",
+    waterTemp: { min: 12, active: 16, peakLow: 20, peakHigh: 25, decline: 28, max: 30 },
+    pressure: { ideal: 755, range: 10, prefersLow: true, changeSensitivity: 0.6 },
+    hourlyActivity: [.6,.5,.4,.3,.2,.15,.1,.1,.05,.05,.05,.05,.05,.05,.05,.1,.2,.4,.6,.8,.9,1,.9,.7],
+    seasonalActivity: [.0,.0,.05,.2,.5,.8,.9,1,.8,.4,.1,.0],
+    prefersOvercast: true, prefersRain: true, windTolerance: 6,
+    goodWindDirs: ["Ю","ЮЗ"], spawnMonth: 5, spawnWeeks: 3,
+    tips: {
+      great: "Квок, живец, пучок выползков! Ямы с 20:00 до рассвета.",
+      good: "Крупный живец, лягушка. Донка на русловых бровках.",
+      weak: "Кусочки рыбы на донке в яме. Ночью шансы выше.",
+      bad: "Рыба залегла. Подождите потепления и стабилизации давления.",
+    },
+  },
+  "Плотва": {
+    emoji: "🐟", type: "peaceful",
+    waterTemp: { min: 4, active: 8, peakLow: 12, peakHigh: 18, decline: 22, max: 25 },
+    pressure: { ideal: 758, range: 12, prefersLow: false, changeSensitivity: 0.6 },
+    hourlyActivity: [.1,.05,.05,.1,.3,.6,.8,.9,.7,.5,.4,.3,.25,.3,.35,.5,.7,.85,.9,.7,.4,.2,.15,.1],
+    seasonalActivity: [.3,.3,.5,.8,1,.8,.7,.7,.8,.7,.4,.3],
+    prefersOvercast: false, prefersRain: false, windTolerance: 5,
+    goodWindDirs: ["Ю","ЮЗ","З","ЮВ"], spawnMonth: 3, spawnWeeks: 2,
+    tips: {
+      great: "Опарыш, мотыль, перловка! Поплавок или лёгкий фидер.",
+      good: "Мелкие крючки, тонкая леска 0.10-0.14. У травы, на течении.",
+      weak: "Бутерброд мотыль+опарыш. Пробуй разные глубины.",
+      bad: "Самая тонкая оснастка, мотыль. Подожди стабильной погоды.",
+    },
+  },
+  "Жерех": {
+    emoji: "🐟", type: "predator",
+    waterTemp: { min: 10, active: 14, peakLow: 18, peakHigh: 24, decline: 26, max: 28 },
+    pressure: { ideal: 762, range: 8, prefersLow: false, changeSensitivity: 0.7 },
+    hourlyActivity: [.05,.05,.05,.1,.3,.7,.9,1,.7,.4,.3,.2,.15,.2,.3,.5,.7,.9,.8,.5,.2,.1,.05,.05],
+    seasonalActivity: [.0,.0,.1,.3,.6,.8,.9,1,.9,.5,.1,.0],
+    prefersOvercast: false, prefersRain: false, windTolerance: 5,
+    goodWindDirs: ["Ю","ЮЗ","З"], spawnMonth: 3, spawnWeeks: 2,
+    tips: {
+      great: "Кастмастер, пилькер! Дальний заброс на перекаты. Утренний «бой»!",
+      good: "Блёсны 15-25г, бомбарда + стример. Ищи буруны.",
+      weak: "Длинные забросы, тонкий шнур, прозрачные приманки.",
+      bad: "Жерех на глубине. Глубоководные воблеры или переключись на судака.",
+    },
+  },
+  "Форель": {
+    emoji: "🐟", type: "predator",
+    waterTemp: { min: 3, active: 6, peakLow: 10, peakHigh: 14, decline: 18, max: 20 },
+    pressure: { ideal: 758, range: 10, prefersLow: true, changeSensitivity: 0.8 },
+    hourlyActivity: [.1,.05,.05,.15,.3,.6,.8,.9,.7,.5,.3,.2,.2,.25,.3,.5,.7,.9,.85,.6,.3,.2,.15,.1],
+    seasonalActivity: [.5,.5,.6,.8,.9,.7,.4,.5,.8,1,.7,.5],
+    prefersOvercast: true, prefersRain: true, windTolerance: 4,
+    goodWindDirs: ["З","ЮЗ","С"], spawnMonth: 9, spawnWeeks: 4,
+    tips: {
+      great: "Мелкие вращалки, микроколебалки, нимфы! Прохладные ручьи, перекаты.",
+      good: "Воблеры-крэнки до 5см, мушки. За камнями, на обратках.",
+      weak: "Тонкая леска, натуральные приманки. Ранние утренние часы.",
+      bad: "Вода слишком тёплая. Ищи холодные притоки и родники.",
+    },
+  },
+  "Налим": {
+    emoji: "🐟", type: "predator",
+    waterTemp: { min: 1, active: 2, peakLow: 4, peakHigh: 10, decline: 14, max: 15 },
+    pressure: { ideal: 755, range: 15, prefersLow: true, changeSensitivity: 0.3 },
+    hourlyActivity: [.7,.6,.5,.4,.2,.1,.05,.05,.05,.05,.05,.05,.05,.05,.05,.1,.2,.4,.6,.8,.9,1,.9,.8],
+    seasonalActivity: [1,.9,.6,.2,.05,.0,.0,.0,.1,.3,.7,.9],
+    prefersOvercast: true, prefersRain: true, windTolerance: 10,
+    goodWindDirs: ["С","СВ","СЗ"], spawnMonth: 0, spawnWeeks: 3,
+    tips: {
+      great: "Живец, нарезка рыбы, пучок червей! Донки на ночь, каменистое дно.",
+      good: "Ловля 18:00 — рассвет. Выползки, куриная печень на донке.",
+      weak: "Мелкий ёрш или пескарь. Только ночная ловля.",
+      bad: "Слишком тепло для налима. Ждите похолодания ниже 12°С воды.",
+    },
+  },
+};
+
+function estimateWaterTemp(airTemp, month) {
+  const lag = [5, 4, 3, 2, 1, 0, -1, 0, 1, 2, 3, 4][month] || 0;
+  return Math.max(0, Math.min(35, airTemp - lag));
+}
+
+function getSeason(month) {
+  if (month >= 2 && month <= 4) return 1;
+  if (month >= 5 && month <= 7) return 2;
+  if (month >= 8 && month <= 10) return 3;
+  return 0;
+}
+
+function getSeasonName(month) { return ["Зима","Весна","Лето","Осень"][getSeason(month)]; }
+
+function computeFishScore(fishName, weather, moon, hour, month) {
+  const p = FISH_PROFILES[fishName];
+  if (!p) return { score: 50, level: "good", tip: "", factors: {} };
+  const airTemp = weather?.temp ?? 15;
+  const waterTemp = weather?.waterTemp ?? estimateWaterTemp(airTemp, month);
+  const tp = p.waterTemp;
+  let tS = 0;
+  if (waterTemp < tp.min || waterTemp > tp.max) tS = 0;
+  else if (waterTemp >= tp.peakLow && waterTemp <= tp.peakHigh) tS = 1;
+  else if (waterTemp >= tp.active && waterTemp < tp.peakLow) tS = .4 + .6 * ((waterTemp - tp.active) / (tp.peakLow - tp.active));
+  else if (waterTemp > tp.peakHigh && waterTemp <= tp.decline) tS = .4 + .6 * ((tp.decline - waterTemp) / (tp.decline - tp.peakHigh));
+  else if (waterTemp < tp.active) tS = .1 + .3 * ((waterTemp - tp.min) / Math.max(1, tp.active - tp.min));
+  else tS = .1 + .3 * ((tp.max - waterTemp) / Math.max(1, tp.max - tp.decline));
+  const pressure = weather?.pressure ?? 760;
+  const pDiff = Math.abs(pressure - p.pressure.ideal);
+  let pS = Math.max(0, 1 - pDiff / p.pressure.range);
+  if (p.pressure.prefersLow && pressure < p.pressure.ideal) pS = Math.min(1, pS + .15);
+  if (!p.pressure.prefersLow && pressure > p.pressure.ideal) pS = Math.min(1, pS + .1);
+  const hS = p.hourlyActivity[Math.min(23, Math.max(0, hour))] || .3;
+  let sS = p.seasonalActivity[month] || .3;
+  const isSpawn = month === p.spawnMonth || (month === p.spawnMonth + 1 && p.spawnWeeks > 2);
+  if (isSpawn) sS *= .4;
+  const clouds = weather?.clouds ?? 50;
+  const cS = p.prefersOvercast ? (clouds > 70 ? 1 : clouds > 40 ? .7 : .4) : (clouds < 30 ? .9 : clouds < 60 ? .7 : .5);
+  const ws = parseFloat(weather?.wind) || 0;
+  let wS = ws <= 1 ? .6 : ws <= 3 ? .8 : ws <= p.windTolerance ? .7 : ws <= p.windTolerance + 3 ? .3 : .1;
+  let wdS = .5;
+  const wdDeg = weather?.windDeg;
+  if (wdDeg != null) {
+    const dirs = ["С","СВ","В","ЮВ","Ю","ЮЗ","З","СЗ"];
+    const dir = dirs[Math.round(wdDeg / 45) % 8];
+    wdS = p.goodWindDirs.includes(dir) ? .9 : .4;
+    if (["С","СВ","В"].includes(dir)) wdS = Math.min(wdS, .35);
+  }
+  const mF = moon?.factor || .5;
+  let mS = p.type === "peaceful" ? Math.max(.2, 1.1 - mF) : Math.max(.2, mF);
+  // Weighted sum: temp 25, pressure 20, stability 10, hour 15, season 12, clouds 5, wind 5, windDir 3, moon 5
+  const raw = tS * 25 + pS * 20 + .7 * 10 + hS * 15 + sS * 12 + cS * 5 + wS * 5 + wdS * 3 + mS * 5;
+  const score = Math.round(Math.max(5, Math.min(95, raw)));
+  let level, tip;
+  if (score >= 70) { level = "great"; tip = p.tips.great; }
+  else if (score >= 45) { level = "good"; tip = p.tips.good; }
+  else if (score >= 25) { level = "weak"; tip = p.tips.weak; }
+  else { level = "bad"; tip = p.tips.bad; }
+  return { score, level, tip, isSpawn, waterTemp: Math.round(waterTemp) };
+}
+
+function computeBiteScoreAdvanced(weather, moon, hour) {
+  const month = new Date().getMonth();
+  const all = Object.keys(FISH_PROFILES).map(f => ({ fish: f, emoji: FISH_PROFILES[f].emoji, ...computeFishScore(f, weather, moon, hour, month) }));
+  const top = [...all].sort((a, b) => b.score - a.score).slice(0, 3);
+  const popular = ["Щука","Окунь","Карп","Карась","Лещ","Судак","Плотва"];
+  const popScores = all.filter(s => popular.includes(s.fish));
+  const avg = Math.round(popScores.reduce((a, s) => a + s.score, 0) / popScores.length);
+  return { score: Math.max(5, Math.min(95, avg)), topFish: top, allScores: all, month, season: getSeasonName(month) };
+}
+
 function computeBiteScore(weather, moon, hour) {
   if (!weather) return simulatedScore(hour);
-  let score = 50;
-  const p = weather.pressure || 750;
-  if (p >= 748 && p <= 755) score += 18; else if (p >= 745 && p <= 758) score += 10; else if (p < 740 || p > 765) score -= 15;
-  score += Math.round((moon?.factor || 0.5) * 18);
-  const w = parseFloat(weather.wind) || 0;
-  if (w >= 2 && w <= 5) score += 8; else if (w > 8) score -= 10;
-  if ((hour >= 5 && hour <= 9) || (hour >= 17 && hour <= 21)) score += 12;
-  else if (hour >= 12 && hour <= 14) score -= 8;
-  return Math.max(5, Math.min(95, score));
+  return computeBiteScoreAdvanced(weather, moon, hour).score;
 }
 function simulatedScore(hour) {
-  const base = 45;
-  if ((hour >= 5 && hour <= 8) || (hour >= 18 && hour <= 21)) return base + 25;
-  if (hour >= 12 && hour <= 14) return base - 10;
-  return base + 5;
+  if ((hour >= 5 && hour <= 8) || (hour >= 18 && hour <= 21)) return 70;
+  if (hour >= 12 && hour <= 14) return 35;
+  return 50;
+}
+function getGeneralRecommendation(score, weather, month) {
+  const s = getSeason(month);
+  const base = ["Зимой рыба малоактивна. Лучшее время — оттепели. Мелкие приманки.", "Весна — преднерестовый жор! Натуральные наживки.", "Летом ловите на зорьках. Днём рыба на глубине.", "Осень — жор хищника! Крупные приманки, трофейный сезон."][s];
+  let rec = base;
+  if (weather) {
+    if (weather.pressure < 745) rec += " ⚠️ Низкое давление — хищник активнее.";
+    if (weather.pressure > 765) rec += " ⚠️ Высокое давление — лучше мирная рыба.";
+    if (parseFloat(weather.wind) > 7) rec += " 💨 Сильный ветер — утяжели оснастку.";
+  }
+  return rec;
 }
 
 function getScoreColor(s, v) {
@@ -1199,8 +1444,28 @@ function ViewCatchScreen({ back, catchItem, deleteCatch, v }) {
 // ═══════════════════════════════════════
 function ForecastScreen({ wd, v }) {
   const { weather, forecast, moon, biteScore, weatherLoading, locationName, currentHour } = wd;
-  const hourlyScores = useMemo(() => Array.from({ length: 20 }, (_, i) => ({ h: i + 4, score: computeBiteScore(weather, moon, i + 4) })), [weather, moon]);
+  const [selectedFish, setSelectedFish] = useState(null); // null = общий прогноз
+  const month = new Date().getMonth();
+
+  const advanced = useMemo(() => weather ? computeBiteScoreAdvanced(weather, moon, currentHour) : null, [weather, moon, currentHour]);
+
+  // Hourly scores for selected fish or general
+  const hourlyScores = useMemo(() => Array.from({ length: 20 }, (_, i) => {
+    const h = i + 4;
+    if (selectedFish && weather) {
+      return { h, score: computeFishScore(selectedFish, weather, moon, h, month).score };
+    }
+    return { h, score: computeBiteScore(weather, moon, h) };
+  }), [weather, moon, selectedFish, month]);
   const bestHour = hourlyScores.reduce((a, b) => a.score > b.score ? a : b, { h: 6, score: 0 });
+
+  // Selected fish detailed score
+  const fishDetail = useMemo(() => {
+    if (!selectedFish || !weather) return null;
+    return computeFishScore(selectedFish, weather, moon, currentHour, month);
+  }, [selectedFish, weather, moon, currentHour, month]);
+
+  const displayScore = fishDetail ? fishDetail.score : biteScore;
 
   const dailyForecast = useMemo(() => {
     if (!forecast) return null;
@@ -1217,63 +1482,130 @@ function ForecastScreen({ wd, v }) {
       const avgTemp = Math.round(d.temps.reduce((a, b) => a + b, 0) / d.temps.length);
       const avgPressure = Math.round(d.pressures.reduce((a, b) => a + b, 0) / d.pressures.length);
       const avgWind = (d.winds.reduce((a, b) => a + b, 0) / d.winds.length).toFixed(1);
-      const fakeW = { pressure: avgPressure, wind: avgWind, clouds: 50 };
+      const fakeW = { pressure: avgPressure, wind: avgWind, clouds: 50, temp: avgTemp };
       const dayMoon = getMoonPhase(new Date(date));
-      const maxScore = Math.max(computeBiteScore(fakeW, dayMoon, 7), computeBiteScore(fakeW, dayMoon, 19));
+      const dayMonth = new Date(date).getMonth();
+      const maxScore = selectedFish
+        ? Math.max(computeFishScore(selectedFish, fakeW, dayMoon, 7, dayMonth).score, computeFishScore(selectedFish, fakeW, dayMoon, 19, dayMonth).score)
+        : Math.max(computeBiteScore(fakeW, dayMoon, 7), computeBiteScore(fakeW, dayMoon, 19));
       const dt = new Date(date);
       return { label: i === 0 ? "Сегодня" : i === 1 ? "Завтра" : dt.toLocaleDateString("ru-RU", { weekday: "short", day: "numeric" }), temp: avgTemp, pressure: avgPressure, wind: avgWind, maxScore, moon: dayMoon, icon: d.icons[Math.floor(d.icons.length / 2)] };
     });
-  }, [forecast]);
+  }, [forecast, selectedFish, month]);
+
+  const fishList = Object.entries(FISH_PROFILES);
 
   return (
     <div style={{ padding: "0 16px 16px" }}>
       <div className="f0" style={{ padding: "16px 0" }}>
         <div style={{ fontSize: 24, fontWeight: 900 }}>Прогноз клёва</div>
-        <div style={{ fontSize: 13, color: v.textMuted, marginTop: 2 }}>{weather ? `${weather.cityName} · реальные данные` : weatherLoading ? "Загрузка..." : "Нет данных"}</div>
+        <div style={{ fontSize: 13, color: v.textMuted, marginTop: 2 }}>
+          {weather ? `${weather.cityName} · ${getSeasonName(month)}` : weatherLoading ? "Загрузка..." : "Нет данных"}
+        </div>
       </div>
 
-      <GlassCard v={v} className="f1" style={{ textAlign: "center", padding: "24px 20px", borderRadius: 24 }}>
+      {/* ── Fish selector ── */}
+      <div className="f1" style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 6, marginBottom: 10 }}>
+        <button onClick={() => setSelectedFish(null)} className="btn" style={{
+          padding: "7px 14px", borderRadius: 20, whiteSpace: "nowrap", flexShrink: 0, cursor: "pointer", fontFamily: "inherit",
+          background: !selectedFish ? `${v.accent}18` : "transparent",
+          border: `1.5px solid ${!selectedFish ? v.accent : v.cardBorder}`,
+          color: !selectedFish ? v.accent : v.textMuted, fontSize: 12, fontWeight: 700,
+        }}>🎣 Все</button>
+        {fishList.map(([name, prof]) => (
+          <button key={name} onClick={() => { setSelectedFish(name); haptic("light"); }} className="btn" style={{
+            padding: "7px 14px", borderRadius: 20, whiteSpace: "nowrap", flexShrink: 0, cursor: "pointer", fontFamily: "inherit",
+            background: selectedFish === name ? `${v.accent}18` : "transparent",
+            border: `1.5px solid ${selectedFish === name ? v.accent : v.cardBorder}`,
+            color: selectedFish === name ? v.accent : v.textMuted, fontSize: 12, fontWeight: 700,
+          }}>{prof.emoji} {name}</button>
+        ))}
+      </div>
+
+      {/* ── Main score ring ── */}
+      <GlassCard v={v} className="f1" style={{ textAlign: "center", padding: "20px 20px 16px", borderRadius: 24 }}>
         {weatherLoading ? <div style={{ padding: 20, color: v.textMuted }}>⏳ Загрузка...</div> : <>
-          <div style={{ position: "relative", width: 110, height: 110, margin: "0 auto 14px" }}>
+          <div style={{ position: "relative", width: 110, height: 110, margin: "0 auto 12px" }}>
             <svg width={110} height={110} style={{ transform: "rotate(-90deg)" }}>
               <circle cx={55} cy={55} r={46} fill="none" stroke={`${v.accent}10`} strokeWidth={7} />
-              <circle cx={55} cy={55} r={46} fill="none" stroke={getScoreColor(biteScore, v)} strokeWidth={7} strokeDasharray={289.0} strokeDashoffset={289.0 * (1 - biteScore / 100)} strokeLinecap="round" />
+              <circle cx={55} cy={55} r={46} fill="none" stroke={getScoreColor(displayScore, v)} strokeWidth={7} strokeDasharray={289} strokeDashoffset={289 * (1 - displayScore / 100)} strokeLinecap="round" />
             </svg>
             <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
-              <span style={{ fontSize: 34, fontWeight: 900, color: getScoreColor(biteScore, v) }}>{biteScore}</span>
+              <span style={{ fontSize: 34, fontWeight: 900, color: getScoreColor(displayScore, v) }}>{displayScore}</span>
               <span style={{ fontSize: 10, color: v.textDim }}>%</span>
             </div>
           </div>
-          <div style={{ fontSize: 22, fontWeight: 800, color: getScoreColor(biteScore, v) }}>{getScoreLabel(biteScore)} клёв</div>
-          <div style={{ fontSize: 13, color: v.textMuted, marginTop: 6 }}>Лучшее время: <strong style={{ color: v.text }}>{bestHour.h}:00</strong> ({bestHour.score}%)</div>
+          <div style={{ fontSize: 20, fontWeight: 800, color: getScoreColor(displayScore, v) }}>
+            {selectedFish ? `${selectedFish} — ${getScoreLabel(displayScore)}` : `${getScoreLabel(displayScore)} клёв`}
+          </div>
+          <div style={{ fontSize: 13, color: v.textMuted, marginTop: 4 }}>Лучшее время: <strong style={{ color: v.text }}>{bestHour.h}:00</strong> ({bestHour.score}%)</div>
+          {fishDetail?.isSpawn && <div style={{ fontSize: 12, color: v.btnDangerColor, marginTop: 6, fontWeight: 700 }}>⚠️ Период нереста — клёв ослаблен</div>}
+          {fishDetail && <div style={{ fontSize: 12, color: v.stats[0], marginTop: 4 }}>🌡 Вода ≈{fishDetail.waterTemp}°C</div>}
         </>}
       </GlassCard>
 
+      {/* ── Top-3 fish (when no fish selected) ── */}
+      {!selectedFish && advanced && (
+        <GlassCard v={v} className="f2" style={{ padding: 14, borderRadius: 16 }}>
+          <div style={{ fontSize: 11, color: v.textDim, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, marginBottom: 10 }}>🏆 Лучший клёв сейчас</div>
+          {advanced.topFish.map((f, i) => (
+            <button key={f.fish} onClick={() => { setSelectedFish(f.fish); haptic("light"); }} className="btn" style={{
+              width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", borderRadius: 12, marginBottom: 4,
+              background: i === 0 ? `${v.accent}08` : "transparent", border: `1px solid ${i === 0 ? `${v.accent}15` : "transparent"}`,
+              cursor: "pointer", textAlign: "left", boxSizing: "border-box",
+            }}>
+              <span style={{ fontSize: 10, fontWeight: 900, color: v.textDim, width: 20 }}>{i + 1}</span>
+              <span style={{ fontSize: 18 }}>{f.emoji}</span>
+              <span style={{ flex: 1, fontSize: 14, fontWeight: 700, color: v.text }}>{f.fish}</span>
+              <span style={{ fontSize: 16, fontWeight: 900, color: getScoreColor(f.score, v) }}>{f.score}%</span>
+            </button>
+          ))}
+        </GlassCard>
+      )}
+
+      {/* ── Fish-specific tip ── */}
+      {selectedFish && fishDetail && (
+        <GlassCard v={v} style={{ padding: 14, borderRadius: 16, border: `1px solid ${v.accentBorder}` }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: v.accent, marginBottom: 6 }}>🎯 Рекомендация: {selectedFish}</div>
+          <div style={{ fontSize: 13, color: v.textMuted, lineHeight: 1.7 }}>{fishDetail.tip}</div>
+        </GlassCard>
+      )}
+
+      {/* ── Weather metrics ── */}
       <div className="f2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 10 }}>
         {[
-          { l: "Давление", val: weather?.pressure || "—", u: "мм рт.ст.", c: v.stats[0] },
-          { l: "Температура", val: weather?.temp || "—", u: "°C", c: v.stats[2] },
+          { l: "Давление", val: weather?.pressure || "—", u: "мм", c: v.stats[0] },
+          { l: "Воздух", val: weather?.temp || "—", u: "°C", c: v.stats[2] },
           { l: "Ветер", val: weather ? `${weather.wind} ${windDir(weather.windDeg)}` : "—", u: "м/с", c: v.textSecondary },
-          { l: "Темп. воды ≈", val: weather?.waterTemp || "—", u: "°C", c: v.stats[0] },
+          { l: "Вода ≈", val: weather ? estimateWaterTemp(weather.temp, month) : "—", u: "°C", c: v.stats[0] },
+          { l: "Облачность", val: weather?.clouds ?? "—", u: "%", c: v.stats[3] },
+          { l: "Влажность", val: weather?.humidity ?? "—", u: "%", c: v.stats[1] },
         ].map(s => (
-          <GlassCard key={s.l} v={v} style={{ padding: 12, borderRadius: 14, textAlign: "center" }}>
-            <div style={{ fontSize: 10, color: v.textDim, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.8 }}>{s.l}</div>
-            <div style={{ fontSize: 20, fontWeight: 900, color: s.c, marginTop: 4 }}>{s.val}<span style={{ fontSize: 10, color: v.textDim, fontWeight: 400 }}> {s.u}</span></div>
+          <GlassCard key={s.l} v={v} style={{ padding: 10, borderRadius: 14, textAlign: "center" }}>
+            <div style={{ fontSize: 9, color: v.textDim, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>{s.l}</div>
+            <div style={{ fontSize: 18, fontWeight: 900, color: s.c, marginTop: 3 }}>{s.val}<span style={{ fontSize: 9, color: v.textDim, fontWeight: 400 }}> {s.u}</span></div>
           </GlassCard>
         ))}
       </div>
 
-      <GlassCard v={v} className="f3" style={{ display: "flex", alignItems: "center", gap: 14, padding: 16, borderRadius: 16 }}>
-        <span style={{ fontSize: 38 }}>{moon.icon}</span>
+      {/* ── Moon ── */}
+      <GlassCard v={v} className="f3" style={{ display: "flex", alignItems: "center", gap: 14, padding: 14, borderRadius: 16 }}>
+        <span style={{ fontSize: 34 }}>{moon.icon}</span>
         <div style={{ flex: 1 }}>
-          <div style={{ fontSize: 10, color: v.textDim, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1 }}>Лунная фаза</div>
-          <div style={{ fontSize: 17, fontWeight: 800, marginTop: 3 }}>{moon.name}</div>
+          <div style={{ fontSize: 10, color: v.textDim, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1 }}>Луна · {getSeasonName(month)}</div>
+          <div style={{ fontSize: 15, fontWeight: 800, marginTop: 2 }}>{moon.name}</div>
         </div>
-        <div style={{ fontSize: 15, fontWeight: 800, color: v.stats[2] }}>{Math.round(moon.factor * 100)}%</div>
+        <div style={{ textAlign: "right" }}>
+          <div style={{ fontSize: 15, fontWeight: 800, color: v.stats[2] }}>{Math.round(moon.factor * 100)}%</div>
+          <div style={{ fontSize: 10, color: v.textDim }}>активность</div>
+        </div>
       </GlassCard>
 
+      {/* ── Hourly chart ── */}
       <GlassCard v={v} className="f4" style={{ padding: 16, borderRadius: 16 }}>
-        <div style={{ fontSize: 11, color: v.textDim, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 12 }}>По часам</div>
+        <div style={{ fontSize: 11, color: v.textDim, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 12 }}>
+          По часам{selectedFish ? ` · ${selectedFish}` : ""}
+        </div>
         <div style={{ display: "flex", alignItems: "flex-end", gap: 2, height: 70 }}>
           {hourlyScores.map(h => {
             const isCur = h.h === currentHour;
@@ -1287,12 +1619,15 @@ function ForecastScreen({ wd, v }) {
         </div>
       </GlassCard>
 
+      {/* ── 5-day forecast ── */}
       {dailyForecast && (
         <GlassCard v={v} className="f5" style={{ padding: 16, borderRadius: 16 }}>
-          <div style={{ fontSize: 11, color: v.textDim, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 12 }}>5 дней</div>
+          <div style={{ fontSize: 11, color: v.textDim, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 12 }}>
+            5 дней{selectedFish ? ` · ${selectedFish}` : ""}
+          </div>
           {dailyForecast.map((d, i) => (
             <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 0", borderBottom: i < dailyForecast.length - 1 ? `1px solid ${v.cardBorder}` : "none" }}>
-              <span style={{ width: 60, fontSize: 13, fontWeight: i === 0 ? 800 : 500, color: i === 0 ? v.text : v.textMuted }}>{d.label}</span>
+              <span style={{ width: 56, fontSize: 13, fontWeight: i === 0 ? 800 : 500, color: i === 0 ? v.text : v.textMuted }}>{d.label}</span>
               <span style={{ fontSize: 15 }}>{weatherEmoji(d.icon)}</span>
               <span style={{ fontSize: 15 }}>{d.moon.icon}</span>
               <span style={{ flex: 1, fontSize: 12, color: v.textMuted }}>{d.temp}° · {d.wind}м/с</span>
@@ -1302,10 +1637,33 @@ function ForecastScreen({ wd, v }) {
         </GlassCard>
       )}
 
+      {/* ── All fish scores table ── */}
+      {!selectedFish && advanced && (
+        <GlassCard v={v} style={{ padding: 16, borderRadius: 16 }}>
+          <div style={{ fontSize: 11, color: v.textDim, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, marginBottom: 10 }}>📊 Все виды рыб</div>
+          {advanced.allScores.sort((a, b) => b.score - a.score).map((f, i) => (
+            <button key={f.fish} onClick={() => { setSelectedFish(f.fish); haptic("light"); }} className="btn" style={{
+              width: "100%", display: "flex", alignItems: "center", gap: 8, padding: "7px 0",
+              borderBottom: i < advanced.allScores.length - 1 ? `1px solid ${v.cardBorder}` : "none",
+              background: "none", border: "none", cursor: "pointer", textAlign: "left", fontFamily: "inherit",
+            }}>
+              <span style={{ fontSize: 16 }}>{f.emoji}</span>
+              <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: v.text }}>{f.fish}</span>
+              {f.isSpawn && <span style={{ fontSize: 9, color: v.btnDangerColor, fontWeight: 700, padding: "2px 6px", borderRadius: 6, background: `${v.btnDangerColor}10` }}>нерест</span>}
+              <div style={{ width: 50, height: 4, borderRadius: 2, background: `${v.accent}10`, overflow: "hidden" }}>
+                <div style={{ width: `${f.score}%`, height: "100%", background: getScoreColor(f.score, v), borderRadius: 2 }} />
+              </div>
+              <span style={{ fontSize: 14, fontWeight: 800, color: getScoreColor(f.score, v), width: 36, textAlign: "right" }}>{f.score}%</span>
+            </button>
+          ))}
+        </GlassCard>
+      )}
+
+      {/* ── General recommendation ── */}
       <GlassCard v={v} style={{ padding: 16, borderRadius: 16, border: `1px solid ${v.accentBorder}` }}>
-        <div style={{ fontSize: 13, fontWeight: 700, color: v.accent, marginBottom: 8 }}>💡 Рекомендации</div>
+        <div style={{ fontSize: 13, fontWeight: 700, color: v.accent, marginBottom: 8 }}>💡 {selectedFish ? `Совет на ${selectedFish.toLowerCase()}` : "Общие рекомендации"}</div>
         <div style={{ fontSize: 13, color: v.textMuted, lineHeight: 1.7 }}>
-          {biteScore >= 70 ? "Отличные условия! Активные приманки — воблеры, блёсны. Хищник активен утром и вечером." : biteScore >= 45 ? "Умеренный клёв. Натуральные наживки, медленная проводка." : "Слабая активность. Мелкие приманки, деликатная оснастка."}
+          {selectedFish && fishDetail ? fishDetail.tip : getGeneralRecommendation(biteScore, weather, month)}
         </div>
       </GlassCard>
     </div>
